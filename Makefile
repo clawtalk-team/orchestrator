@@ -104,7 +104,10 @@ run: install
 	$(VENV_PYTHON) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8571
 
 docker-build:
-	docker build --build-arg GIT_COMMIT=$$(git rev-parse --short HEAD) \
+	docker build \
+	  --provenance=false \
+	  --sbom=false \
+	  --build-arg GIT_COMMIT=$$(git rev-parse --short HEAD) \
 	  --platform linux/arm64 \
 	  -t clawtalk-orchestrator:$(IMAGE_TAG) .
 
