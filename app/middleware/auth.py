@@ -34,6 +34,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         # Check master API key first
         if settings.master_api_key and secrets.compare_digest(key, settings.master_api_key):
             request.state.user_id = "master"
+            request.state.api_key = key  # Store API key for containers
             return await call_next(request)
 
         # In Phase 1, validate token format; auth-gateway validation deferred to Phase 2
@@ -44,6 +45,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         try:
             user_id, _ = key.split(":", 1)
             request.state.user_id = user_id
+            request.state.api_key = key  # Store full API key for passing to containers
         except ValueError:
             return JSONResponse({"detail": "Invalid API key format"}, status_code=401)
 
