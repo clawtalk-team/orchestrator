@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # DynamoDB Local for testing
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: orchestrator-dynamodb-test
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:8000 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Test container with OpenClaw + openclaw-agent + mocks
+  test-container:
+    build:
+      context: ../..
+      dockerfile: orchestrator/test/Dockerfile.e2e
+    container_name: orchestrator-test-container
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    ports:
+      - "18789:18789"  # OpenClaw API
+      - "8082:8080"    # openclaw-agent API
+      - "8789:8789"    # Mock auth gateway
+      - "9090:9090"    # Mock voice gateway
+    environment:
+      # Container identification
+      - USER_ID=test-user-123
+      - CONTAINER_ID=oc-test-e2e-001
+
+      # DynamoDB configuration
+      - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
+      - DYNAMODB_TABLE=openclaw-containers
+      - AWS_REGION=ap-southeast-2
+
+      # Test mode
+      - RUN_MODE=test
+      - PORT=8080
+      - GIN_MODE=release
+
+      # LLM API key (from .env)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:18789/healthz && curl -f http://localhost:8080/health && curl -f http://localhost:8789/health && curl -f http://localhost:9090/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
+networks:
+  test-network:
+    driver: bridge

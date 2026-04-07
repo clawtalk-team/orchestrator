@@ -28,11 +28,15 @@ help:
 	@echo "  test-unit        - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  test-cov         - Run tests with coverage report"
+	@echo "  test-e2e         - Run end-to-end config delivery test (local)"
+	@echo "  test-e2e-aws     - Run end-to-end test against AWS DynamoDB"
+	@echo "  test-e2e-logs    - View E2E test container logs"
+	@echo "  test-e2e-clean   - Stop and clean E2E test containers"
 	@echo "  run              - Run the application locally"
 	@echo "  docker-build     - Build Docker image (ARM64)"
-	@echo "  docker-up        - Start services with docker-compose"
-	@echo "  docker-down      - Stop services with docker-compose"
-	@echo "  docker-logs      - View docker-compose logs"
+	@echo "  docker-up        - Start services with docker compose"
+	@echo "  docker-down      - Stop services with docker compose"
+	@echo "  docker-logs      - View docker compose logs"
 	@echo "  docker-clean     - Stop services and remove volumes"
 	@echo "  clean            - Remove Python cache and build artifacts"
 	@echo "  clean-venv       - Remove virtual environment"
@@ -79,6 +83,22 @@ test-integration: install-dev
 
 test-cov: install-dev
 	$(VENV_PYTHON) -m pytest tests/ --cov=app --cov-report=term-missing --cov-report=html
+
+test-e2e:
+	@echo "=== Running End-to-End Config Delivery Test (Local) ==="
+	./test/test_e2e.sh
+
+test-e2e-aws:
+	@echo "=== Running End-to-End Test Against AWS DynamoDB ==="
+	./test/test_e2e_aws.sh
+
+test-e2e-logs:
+	@echo "=== Viewing E2E Test Container Logs ==="
+	docker logs orchestrator-test-container -f
+
+test-e2e-clean:
+	@echo "=== Cleaning up E2E test containers ==="
+	docker compose -f test/docker-compose.e2e.yml down -v
 
 run: install
 	$(VENV_PYTHON) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8571
