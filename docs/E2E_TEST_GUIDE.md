@@ -159,7 +159,7 @@ curl -X POST http://localhost:18789/v1/chat/completions \
 ### 2. Check Agent Health
 
 ```bash
-curl http://localhost:8082/health | jq
+curl http://localhost:8080/health | jq
 ```
 
 **Expected:**
@@ -174,7 +174,7 @@ curl http://localhost:8082/health | jq
 ### 3. View Agent Config
 
 ```bash
-curl http://localhost:8082/config | jq
+curl http://localhost:8080/config | jq
 ```
 
 **Expected:** Config including `auth_gateway_url`, `llm_provider`, etc.

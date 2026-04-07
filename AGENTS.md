@@ -120,7 +120,7 @@ Any time you kick off a background task (deploy, test run, agent spawn), immedia
 ## Repository Scope
 
 This agent is responsible for the following repositories:
-- `clawtalk-team/openclaw-agent` — Golang agent service connecting OpenClaw to the voice gateway
+- `clawtalk-team/orchestrator` — Python orchestrator service for managing containerized agents
 
 ### External Dependencies
 

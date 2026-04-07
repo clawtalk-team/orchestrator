@@ -371,10 +371,10 @@ curl -X POST http://localhost:18789/v1/chat/completions \
   }'
 
 # Agent health
-curl http://localhost:8082/health
+curl http://localhost:8080/health
 
 # Agent config
-curl http://localhost:8082/config
+curl http://localhost:8080/config
 ```
 
 ## Production Dockerfile (Dockerfile.ecs)

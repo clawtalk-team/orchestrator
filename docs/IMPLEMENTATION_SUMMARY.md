@@ -1,5 +1,7 @@
 # DynamoDB Config Delivery - Implementation Summary
 
+> **Note:** This document describes the DynamoDB-based configuration delivery system implemented in PR #3. This functionality is not yet merged to main. The current main branch uses SSM Parameter Store for configuration.
+
 ## What Was Implemented
 
 We've implemented **Option 2: DynamoDB + Python Init Script** for delivering configuration to containers. This replaces the problematic SSM Parameter Store approach.
