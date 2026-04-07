@@ -49,7 +49,7 @@ def test_health_data_model():
 
 def test_container_request_model():
     """Test ContainerRequest model."""
-    request = ContainerRequest(name="test-container", config={"key": "value"})
+    request = ContainerRequest(name="test-container", config_name="default")
 
     assert request.name == "test-container"
-    assert request.config == {"key": "value"}
+    assert request.config_name == "default"
