@@ -1,0 +1,82 @@
+# CloudFormation template for EventBridge rule
+# To deploy:
+#   aws cloudformation deploy \
+#     --template-file infrastructure/eventbridge.yaml \
+#     --stack-name orchestrator-eventbridge \
+#     --parameter-overrides \
+#         ECSClusterArn=arn:aws:ecs:ap-southeast-2:826182175287:cluster/clawtalk-dev \
+#         LambdaFunctionArn=arn:aws:lambda:ap-southeast-2:826182175287:function:orchestrator-dev \
+#         LambdaFunctionName=orchestrator-dev \
+#     --region ap-southeast-2 \
+#     --profile personal
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EventBridge rule for orchestrator ECS task state changes'
+
+Parameters:
+  ECSClusterArn:
+    Type: String
+    Description: ARN of the ECS cluster to monitor
+    Default: arn:aws:ecs:ap-southeast-2:826182175287:cluster/clawtalk-dev
+
+  LambdaFunctionArn:
+    Type: String
+    Description: ARN of the orchestrator Lambda function
+    Default: arn:aws:lambda:ap-southeast-2:826182175287:function:orchestrator-dev
+
+  LambdaFunctionName:
+    Type: String
+    Description: Name of the orchestrator Lambda function
+    Default: orchestrator-dev
+
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  ECSTaskStateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: orchestrator-ecs-task-state-change
+      Description: Capture ECS task state changes for orchestrator to update DynamoDB
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.ecs
+        detail-type:
+          - ECS Task State Change
+        detail:
+          clusterArn:
+            - !Ref ECSClusterArn
+          lastStatus:
+            - RUNNING
+            - STOPPED
+            - STOPPING
+      Targets:
+        - Id: OrchestratorLambda
+          Arn: !Ref LambdaFunctionArn
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ECSTaskStateChangeRule.Arn
+
+Outputs:
+  EventBridgeRuleArn:
+    Description: ARN of the EventBridge rule
+    Value: !GetAtt ECSTaskStateChangeRule.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RuleArn'
+
+  EventBridgeRuleName:
+    Description: Name of the EventBridge rule
+    Value: !Ref ECSTaskStateChangeRule
+    Export:
+      Name: !Sub '${AWS::StackName}-RuleName'

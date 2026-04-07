@@ -39,3 +39,4 @@ env/
 .DS_Store
 *.log
 coverage.json
+.env

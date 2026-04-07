@@ -242,3 +242,64 @@ python scripts/delete_containers.py --user-id USER_123 --status STOPPED
 # Follow logs for a specific container
 python scripts/get_logs.py oc-abc12345 --user-id USER_123 --follow
 ```
+
+## Testing Scripts
+
+### test_end_to_end_flow.py
+
+End-to-end test script that demonstrates the complete user-to-container provisioning flow with verbose logging.
+
+**For detailed AWS setup instructions, see [AWS_TEST_SETUP.md](AWS_TEST_SETUP.md)**
+
+```bash
+# AWS Configuration (all services in AWS)
+export AWS_PROFILE=personal
+export AWS_DEFAULT_REGION=ap-southeast-2
+
+# Run with AWS Lambda endpoints
+python scripts/test_end_to_end_flow.py
+
+# Or with explicit configuration
+AUTH_GATEWAY_URL=https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com \
+ORCHESTRATOR_URL=https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com \
+AWS_PROFILE=personal \
+python scripts/test_end_to_end_flow.py
+```
+
+**What it does:**
+1. Creates a user in auth-gateway with a unique email
+2. Gets an API key back from user creation
+3. Validates the API key with auth-gateway
+4. Creates a container via the orchestrator using the API key
+5. Shows DynamoDB config that gets stored for the user
+6. Shows environment variables that will be passed to the container
+7. Monitors container status until it reaches RUNNING state
+8. Prints verbose logs of all API calls, requests, and responses
+
+**Features:**
+- ✅ Color-coded output (success, info, warnings, errors)
+- ✅ Full request/response dumps with headers and bodies
+- ✅ Masked sensitive values (API keys shown as `xxx...xxx`)
+- ✅ Step-by-step progress tracking
+- ✅ DynamoDB config inspection
+- ✅ Container environment variable preview
+- ✅ Explanation of what happens in the container after launch
+
+**Environment Variables:**
+- `AUTH_GATEWAY_URL` - Auth gateway Lambda URL (default: AWS Lambda endpoint)
+- `ORCHESTRATOR_URL` - Orchestrator Lambda URL (default: AWS Lambda endpoint)
+- `DYNAMODB_TABLE` - DynamoDB table name (default: openclaw-containers)
+- `DYNAMODB_REGION` - AWS region (default: ap-southeast-2)
+- `AWS_PROFILE` - AWS CLI profile to use (default: personal)
+- `AWS_DEFAULT_REGION` - AWS region (default: ap-southeast-2)
+- `AWS_ACCESS_KEY_ID` - Explicit AWS credentials (optional, uses profile if not set)
+- `AWS_SECRET_ACCESS_KEY` - Explicit AWS credentials (optional, uses profile if not set)
+
+**Note:** Do NOT set `DYNAMODB_ENDPOINT` for AWS - it will automatically use AWS DynamoDB.
+
+**Use Cases:**
+- Testing the complete user creation → container provisioning flow
+- Debugging auth-gateway and orchestrator integration
+- Understanding what config gets transferred to containers
+- Validating DynamoDB config storage
+- Demonstrating the system to new developers

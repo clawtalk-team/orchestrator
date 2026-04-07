@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ import boto3
 from app.config import get_settings
 from app.models.container import Container
 from app.services import dynamodb
+
+logger = logging.getLogger(__name__)
 
 
 def _get_ecs_client():
@@ -92,6 +95,7 @@ def create_container(
             {"name": "CONFIG_NAME", "value": config_name},
             {"name": "DYNAMODB_TABLE", "value": settings.containers_table},
             {"name": "DYNAMODB_REGION", "value": settings.dynamodb_region},
+            {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
 
         # For local development, pass DynamoDB endpoint
@@ -209,15 +213,46 @@ def handle_task_event(event: Dict[str, Any]) -> None:
 
     Updates container records when task reaches RUNNING or stops.
     """
+    logger.info(f"Received ECS task event: source={event.get('source')}, detail-type={event.get('detail-type')}")
+
     detail = event.get("detail", {})
     task_arn = detail.get("taskArn")
     status = detail.get("lastStatus")
 
+    logger.info(f"Task ARN: {task_arn}, Status: {status}")
+
     if not task_arn:
+        logger.warning("No task ARN in event, skipping")
         return
 
     # Extract user_id and container_id from tags
+    # EventBridge events don't include tags by default, so fetch from ECS API
     tags = detail.get("tags", [])
+
+    if not tags:
+        # Fetch tags from ECS API
+        logger.info("Tags not in event, fetching from ECS API")
+        try:
+            settings = get_settings()
+            ecs = _get_ecs_client()
+            cluster_name = settings.ecs_cluster_name
+            task_id = task_arn.split("/")[-1]  # Extract task ID from ARN
+
+            response = ecs.describe_tasks(
+                cluster=cluster_name,
+                tasks=[task_id],
+                include=["TAGS"]
+            )
+
+            if response.get("tasks"):
+                tags = response["tasks"][0].get("tags", [])
+                logger.info(f"Fetched tags from ECS API: {tags}")
+        except Exception as e:
+            logger.error(f"Failed to fetch tags from ECS API: {e}")
+            return
+    else:
+        logger.info(f"Task tags from event: {tags}")
+
     user_id = None
     container_id = None
 
@@ -227,12 +262,18 @@ def handle_task_event(event: Dict[str, Any]) -> None:
         elif tag.get("key") == "container_id":
             container_id = tag.get("value")
 
+    logger.info(f"Extracted user_id={user_id}, container_id={container_id}")
+
     if not user_id or not container_id:
+        logger.warning(f"Missing user_id or container_id in tags, skipping")
         return
 
     container = dynamodb.get_container(user_id, container_id)
     if not container:
+        logger.warning(f"Container not found: user_id={user_id}, container_id={container_id}")
         return
+
+    logger.info(f"Found container, current status: {container.status}")
 
     if status == "RUNNING":
         # Extract IP and populate health endpoint
@@ -241,13 +282,16 @@ def handle_task_event(event: Dict[str, Any]) -> None:
             container.ip_address = endpoints["ip_address"]
             container.health_endpoint = endpoints["health_endpoint"]
             container.api_endpoint = endpoints["api_endpoint"]
+            logger.info(f"Extracted endpoints: {endpoints}")
 
         container.status = "RUNNING"
         container.health_status = "STARTING"
         container.updated_at = datetime.now(timezone.utc)
         dynamodb.update_container(container)
+        logger.info(f"Updated container to RUNNING: {container_id}")
 
     elif status in ("STOPPED", "STOPPING", "DEPROVISIONING"):
         container.status = "STOPPED"
         container.updated_at = datetime.now(timezone.utc)
         dynamodb.update_container(container)
+        logger.info(f"Updated container to STOPPED: {container_id}")
