@@ -31,12 +31,41 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 
 app = FastAPI(
-    title="orchestrator",
-    description="Container orchestrator for OpenClaw agents",
+    title="ClawTalk Orchestrator API",
+    description="""
+## Container Orchestrator for OpenClaw Agents
+
+This API manages containerized agent deployments on AWS ECS, providing:
+
+* **Container Management**: Create, list, monitor, and delete agent containers
+* **Health Monitoring**: Track container health and performance metrics
+* **User Isolation**: Each user gets their own isolated container environment
+
+### Authentication
+
+All endpoints (except `/health`) require API key authentication via the `x-api-key` header.
+
+### Container Lifecycle
+
+1. **Create** - Request a new container via `POST /containers`
+2. **Monitor** - Check status and health via `GET /containers/{container_id}`
+3. **Use** - Connect to your running container via its IP address
+4. **Delete** - Stop and remove via `DELETE /containers/{container_id}`
+    """,
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "health",
+            "description": "Service health check endpoint",
+        },
+        {
+            "name": "containers",
+            "description": "Operations for managing agent containers",
+        },
+    ],
 )
 
 

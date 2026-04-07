@@ -7,14 +7,34 @@ from app.services import ecs, dynamodb
 router = APIRouter(prefix="/containers", tags=["containers"])
 
 
-@router.post("", response_model=ContainerResponse)
+@router.post(
+    "",
+    response_model=ContainerResponse,
+    summary="Create a new container",
+    response_description="Container created successfully",
+)
 async def create_container(request: Request, req: ContainerRequest):
-    """Create a new container for the authenticated user."""
+    """
+    Create a new container for the authenticated user.
+
+    The container will be deployed as an ECS task and will start in PENDING status.
+    Once the task is running and health checks pass, the status will change to RUNNING
+    and an IP address will be assigned.
+
+    **Note**: User configuration must exist in DynamoDB before creating a container,
+    otherwise the container will fail to start.
+    """
     user_id = request.state.user_id
+    api_key = request.state.api_key  # From middleware
+
+    # Note: User config should already exist in DynamoDB
+    # If not, the container will fail to start
+    # Optional: Validate config exists here before creating container
 
     container = ecs.create_container(
         user_id=user_id,
-        config=req.config,
+        api_key=api_key,  # Pass API key for auth_gateway_api_key
+        config=req.config,  # Optional custom config overrides
     )
     return ContainerResponse(
         container_id=container.container_id,
@@ -26,9 +46,25 @@ async def create_container(request: Request, req: ContainerRequest):
     )
 
 
-@router.get("", response_model=List[ContainerResponse])
-async def list_containers(request: Request, status: Optional[str] = None):
-    """List all containers for the authenticated user."""
+@router.get(
+    "",
+    response_model=List[ContainerResponse],
+    summary="List all containers",
+    response_description="List of containers for the authenticated user",
+)
+async def list_containers(
+    request: Request,
+    status: Optional[str] = None,
+):
+    """
+    List all containers for the authenticated user.
+
+    Optionally filter by status:
+    - **PENDING**: Container is being created
+    - **RUNNING**: Container is active
+    - **STOPPED**: Container has been stopped
+    - **FAILED**: Container failed to start or crashed
+    """
     user_id = request.state.user_id
 
     containers = dynamodb.get_user_containers(user_id=user_id, status=status)
@@ -45,9 +81,22 @@ async def list_containers(request: Request, status: Optional[str] = None):
     ]
 
 
-@router.get("/{container_id}", response_model=ContainerResponse)
+@router.get(
+    "/{container_id}",
+    response_model=ContainerResponse,
+    summary="Get container details",
+    response_description="Container details",
+    responses={
+        404: {"description": "Container not found"},
+    },
+)
 async def get_container(request: Request, container_id: str):
-    """Get details of a specific container."""
+    """
+    Get details of a specific container.
+
+    Returns the current status, IP address, health status, and timestamps
+    for the specified container.
+    """
     user_id = request.state.user_id
 
     container = dynamodb.get_container(user_id=user_id, container_id=container_id)
@@ -64,9 +113,22 @@ async def get_container(request: Request, container_id: str):
     )
 
 
-@router.delete("/{container_id}", status_code=204)
+@router.delete(
+    "/{container_id}",
+    status_code=204,
+    summary="Delete a container",
+    response_description="Container deleted successfully",
+    responses={
+        404: {"description": "Container not found"},
+    },
+)
 async def delete_container(request: Request, container_id: str):
-    """Delete/stop a container."""
+    """
+    Delete and stop a container.
+
+    This will stop the ECS task and mark the container as STOPPED.
+    The container record will remain in the database for audit purposes.
+    """
     user_id = request.state.user_id
 
     container = dynamodb.get_container(user_id=user_id, container_id=container_id)
@@ -76,9 +138,25 @@ async def delete_container(request: Request, container_id: str):
     ecs.stop_container(user_id=user_id, container_id=container_id)
 
 
-@router.get("/{container_id}/health", response_model=ContainerHealthResponse)
+@router.get(
+    "/{container_id}/health",
+    response_model=ContainerHealthResponse,
+    summary="Get container health",
+    response_description="Container health status and metrics",
+    responses={
+        404: {"description": "Container not found"},
+    },
+)
 async def get_container_health(request: Request, container_id: str):
-    """Get health status of a specific container."""
+    """
+    Get detailed health status of a specific container.
+
+    Returns health check status along with detailed metrics including:
+    - Number of running agents
+    - Container uptime
+    - Memory and CPU usage
+    - Agent details
+    """
     user_id = request.state.user_id
 
     container = dynamodb.get_container(user_id=user_id, container_id=container_id)
