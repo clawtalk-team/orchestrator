@@ -75,14 +75,26 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
             try:
                 while True:
                     kwargs["startTime"] = last_timestamp
-                    response = logs.filter_log_events(**kwargs)
 
-                    events = response.get("events", [])
-                    for event in events:
-                        timestamp = datetime.fromtimestamp(event["timestamp"] / 1000)
-                        message = event["message"].rstrip()
-                        print(f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} {message}")
-                        last_timestamp = max(last_timestamp, event["timestamp"] + 1)
+                    # Fetch all events with pagination
+                    while True:
+                        response = logs.filter_log_events(**kwargs)
+                        events = response.get("events", [])
+
+                        for event in events:
+                            timestamp = datetime.fromtimestamp(event["timestamp"] / 1000)
+                            message = event["message"].rstrip()
+                            print(f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} {message}")
+                            last_timestamp = max(last_timestamp, event["timestamp"] + 1)
+
+                        # Handle pagination
+                        if "nextToken" in response:
+                            kwargs["nextToken"] = response["nextToken"]
+                        else:
+                            break
+
+                    # Remove nextToken for next iteration
+                    kwargs.pop("nextToken", None)
 
                     if not events:
                         time.sleep(2)
@@ -90,14 +102,22 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
             except KeyboardInterrupt:
                 print("\n==> Stopped following logs")
         else:
-            response = logs.filter_log_events(**kwargs)
-            events = response.get("events", [])
+            # Fetch all events with pagination
+            all_events = []
+            while True:
+                response = logs.filter_log_events(**kwargs)
+                all_events.extend(response.get("events", []))
 
-            if not events:
+                if "nextToken" in response:
+                    kwargs["nextToken"] = response["nextToken"]
+                else:
+                    break
+
+            if not all_events:
                 print(f"No logs found for task {task_id} in the last {since_minutes} minutes")
                 return
 
-            for event in events:
+            for event in all_events:
                 timestamp = datetime.fromtimestamp(event["timestamp"] / 1000)
                 message = event["message"].rstrip()
                 print(f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} {message}")

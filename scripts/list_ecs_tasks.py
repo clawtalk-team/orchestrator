@@ -23,22 +23,30 @@ def list_ecs_tasks(
 
     print(f"==> Listing ECS tasks in cluster: {cluster}\n")
 
-    # List all tasks
-    response = ecs.list_tasks(cluster=cluster)
-    task_arns = response.get("taskArns", [])
+    # List all tasks with pagination
+    task_arns = []
+    list_kwargs = {"cluster": cluster}
+    while True:
+        response = ecs.list_tasks(**list_kwargs)
+        task_arns.extend(response.get("taskArns", []))
+        if "nextToken" not in response:
+            break
+        list_kwargs["nextToken"] = response["nextToken"]
 
     if not task_arns:
         print("No tasks found in cluster.")
         return
 
-    # Describe the tasks to get details
-    tasks_response = ecs.describe_tasks(
-        cluster=cluster,
-        tasks=task_arns,
-        include=["TAGS"]
-    )
-
-    tasks = tasks_response.get("tasks", [])
+    # Describe tasks in batches (max 100 per call)
+    tasks = []
+    for i in range(0, len(task_arns), 100):
+        chunk = task_arns[i:i + 100]
+        tasks_response = ecs.describe_tasks(
+            cluster=cluster,
+            tasks=chunk,
+            include=["TAGS"]
+        )
+        tasks.extend(tasks_response.get("tasks", []))
 
     # Parse tasks into table format
     table_data = []

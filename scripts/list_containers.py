@@ -26,21 +26,32 @@ def list_containers(
 
     print(f"==> Listing containers from DynamoDB table: {table_name}\n")
 
+    items = []
     if user_id:
-        # Query specific user
+        # Query specific user with pagination
         print(f"Filtering by user: {user_id}")
-        response = dynamodb.query(
-            TableName=table_name,
-            KeyConditionExpression="pk = :pk",
-            ExpressionAttributeValues={
+        query_kwargs = {
+            "TableName": table_name,
+            "KeyConditionExpression": "pk = :pk",
+            "ExpressionAttributeValues": {
                 ":pk": {"S": f"USER#{user_id}"}
             }
-        )
-        items = response.get("Items", [])
+        }
+        while True:
+            response = dynamodb.query(**query_kwargs)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
     else:
-        # Scan all containers
-        response = dynamodb.scan(TableName=table_name)
-        items = response.get("Items", [])
+        # Scan all containers with pagination
+        scan_kwargs = {"TableName": table_name}
+        while True:
+            response = dynamodb.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     if not items:
         print("No containers found.")

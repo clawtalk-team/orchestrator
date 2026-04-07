@@ -38,32 +38,38 @@ def get_containers(
 
     print(f"==> Fetching containers for user {user_id}...")
 
-    response = dynamodb.query(
-        TableName=table_name,
-        KeyConditionExpression="pk = :pk",
-        ExpressionAttributeValues={
-            ":pk": {"S": f"USER#{user_id}"}
-        }
-    )
-
-    items = response.get("Items", [])
-
-    # Filter by status if specified
+    # Build query with optional status filter
+    query_kwargs = {
+        "TableName": table_name,
+        "KeyConditionExpression": "pk = :pk",
+        "ExpressionAttributeValues": {":pk": {"S": f"USER#{user_id}"}}
+    }
     if status:
-        items = [item for item in items if item.get("status", {}).get("S") == status]
+        query_kwargs["FilterExpression"] = "#s = :status"
+        query_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+        query_kwargs["ExpressionAttributeValues"][":status"] = {"S": status}
 
-    # Parse items
+    # Query with pagination
     containers = []
-    for item in items:
-        container = {
-            "container_id": item.get("sk", {}).get("S", "").replace("CONTAINER#", ""),
-            "user_id": item.get("user_id", {}).get("S", ""),
-            "status": item.get("status", {}).get("S", ""),
-            "task_arn": item.get("task_arn", {}).get("S", ""),
-            "pk": item.get("pk", {}).get("S", ""),
-            "sk": item.get("sk", {}).get("S", "")
-        }
-        containers.append(container)
+    while True:
+        response = dynamodb.query(**query_kwargs)
+
+        # Parse items
+        for item in response.get("Items", []):
+            container = {
+                "container_id": item.get("sk", {}).get("S", "").replace("CONTAINER#", ""),
+                "user_id": item.get("user_id", {}).get("S", ""),
+                "status": item.get("status", {}).get("S", ""),
+                "task_arn": item.get("task_arn", {}).get("S", ""),
+                "pk": item.get("pk", {}).get("S", ""),
+                "sk": item.get("sk", {}).get("S", "")
+            }
+            containers.append(container)
+
+        # Handle pagination
+        if "LastEvaluatedKey" not in response:
+            break
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     return containers
 
