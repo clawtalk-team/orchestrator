@@ -12,21 +12,18 @@ async def create_container(request: Request, req: ContainerRequest):
     """Create a new container for the authenticated user."""
     user_id = request.state.user_id
 
-    try:
-        container = ecs.create_container(
-            user_id=user_id,
-            config=req.config,
-        )
-        return ContainerResponse(
-            container_id=container.container_id,
-            status=container.status,
-            ip_address=container.ip_address,
-            health_status=container.health_status,
-            created_at=container.created_at,
-            updated_at=container.updated_at,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create container: {str(e)}")
+    container = ecs.create_container(
+        user_id=user_id,
+        config=req.config,
+    )
+    return ContainerResponse(
+        container_id=container.container_id,
+        status=container.status,
+        ip_address=container.ip_address,
+        health_status=container.health_status,
+        created_at=container.created_at,
+        updated_at=container.updated_at,
+    )
 
 
 @router.get("", response_model=List[ContainerResponse])
@@ -76,10 +73,7 @@ async def delete_container(request: Request, container_id: str):
     if not container:
         raise HTTPException(status_code=404, detail="Container not found")
 
-    try:
-        ecs.stop_container(user_id=user_id, container_id=container_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to stop container: {str(e)}")
+    ecs.stop_container(user_id=user_id, container_id=container_id)
 
 
 @router.get("/{container_id}/health", response_model=ContainerHealthResponse)

@@ -111,6 +111,14 @@ def _deserialize_container(item: dict) -> Container:
         except (json.JSONDecodeError, ValueError):
             pass
 
+    # Parse last_health_check safely
+    last_health_check = None
+    if "last_health_check" in item and item["last_health_check"]:
+        try:
+            last_health_check = datetime.fromisoformat(item["last_health_check"])
+        except (ValueError, TypeError):
+            pass
+
     return Container(
         container_id=item["container_id"],
         user_id=item["user_id"],
@@ -121,7 +129,7 @@ def _deserialize_container(item: dict) -> Container:
         health_endpoint=item.get("health_endpoint"),
         api_endpoint=item.get("api_endpoint"),
         health_status=item.get("health_status", "UNKNOWN"),
-        last_health_check=datetime.fromisoformat(item["last_health_check"]) if "last_health_check" in item else None,
+        last_health_check=last_health_check,
         health_data=health_data,
         created_at=datetime.fromisoformat(item["created_at"]),
         updated_at=datetime.fromisoformat(item["updated_at"]),
@@ -196,9 +204,16 @@ def delete_container(user_id: str, container_id: str) -> bool:
 
 
 def get_running_containers() -> List[Container]:
-    """Get all running containers (for health checks)."""
+    """
+    Get all running containers (for health checks).
+
+    Note: This scans the GSI which is more efficient than scanning the main table,
+    but a dedicated GSI with status as partition key would be optimal for large scale.
+    """
     table = _get_table()
+    # Scan the GSI instead of the main table for better performance
     response = table.scan(
+        IndexName="user_id-status-index",
         FilterExpression="#s = :status",
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":status": "RUNNING"},

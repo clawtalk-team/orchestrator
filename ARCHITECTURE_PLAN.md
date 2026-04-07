@@ -1614,7 +1614,7 @@ orchestrator/
 **Goal:** Basic container lifecycle management
 
 **Deliverables:**
-- ✅ Project scaffold (Go + Gin)
+- ✅ Project scaffold (Python + FastAPI)
 - ✅ Auth middleware (validate with auth-gateway)
 - ✅ `POST /containers` - Spin up container
 - ✅ `GET /containers` - List user's containers

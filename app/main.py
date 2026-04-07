@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 import logging
 import os
+from botocore.exceptions import ClientError, EndpointConnectionError
 
 from app.config import get_settings
 from app.services.dynamodb import ensure_table_exists
@@ -20,7 +22,7 @@ async def lifespan(app: FastAPI):
         logger.info("Starting orchestrator — ensuring DynamoDB table exists...")
         try:
             ensure_table_exists()
-        except Exception as exc:
+        except (ClientError, EndpointConnectionError) as exc:
             logger.warning("Could not reach DynamoDB at startup: %s", exc)
     yield
     logger.info("Shutting down orchestrator")
@@ -36,6 +38,29 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(ClientError)
+async def aws_client_error_handler(request: Request, exc: ClientError):
+    """Handle AWS SDK ClientError exceptions."""
+    error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+    error_message = exc.response.get("Error", {}).get("Message", str(exc))
+    logger.error(f"AWS ClientError: {error_code} - {error_message}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"AWS service error: {error_message}"},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected exceptions."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
 
 app.add_middleware(APIKeyMiddleware)
 

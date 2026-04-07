@@ -13,6 +13,7 @@ def _load_ssm_config() -> None:
         return
     try:
         import boto3
+        from botocore.exceptions import ClientError
         # Lambda sets AWS_REGION automatically, fall back to DYNAMODB_REGION or default
         region = os.environ.get("AWS_REGION") or os.environ.get("DYNAMODB_REGION", "us-east-1")
         ssm = boto3.client("ssm", region_name=region)
@@ -21,7 +22,7 @@ def _load_ssm_config() -> None:
         for key, value in config.items():
             if key not in os.environ:  # don't override explicit env vars
                 os.environ[key] = str(value)
-    except Exception as e:
+    except (ClientError, json.JSONDecodeError, KeyError) as e:
         print(f"Warning: could not load SSM config from {path}: {e}")
 
 

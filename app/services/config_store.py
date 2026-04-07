@@ -26,7 +26,7 @@ def store_config(user_id: str, container_id: str, config: Dict[str, Any]) -> str
     ssm.put_parameter(
         Name=param_name,
         Value=config_json,
-        Type="String",
+        Type="SecureString",
         Overwrite=True,
         Description=f"Config for container {container_id} (user {user_id})",
     )

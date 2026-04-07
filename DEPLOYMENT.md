@@ -59,7 +59,7 @@ curl $(terraform output -raw orchestrator_url)/health
 
 # Create test container
 curl -X POST $(terraform output -raw orchestrator_url)/containers \
-  -H "Authorization: Bearer test-user:token-1234567890abcdef" \
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -112,15 +112,16 @@ aws --profile personal logs tail /aws/lambda/orchestrator-dev \
 
 ```bash
 # Get container details from API
-CONTAINER_ID="oc-18c03ca7"
+CONTAINER_ID="{CONTAINER_ID}"
 curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/${CONTAINER_ID} \
-  -H "Authorization: Bearer andrew:my-token-12345678901234"
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 
 # Get task ARN from DynamoDB
+USER_ID="{USER_ID}"
 TASK_ARN=$(aws --profile personal dynamodb get-item \
   --table-name openclaw-containers-dev \
   --region ap-southeast-2 \
-  --key '{"pk":{"S":"USER#andrew"},"sk":{"S":"CONTAINER#'${CONTAINER_ID}'"}}' \
+  --key '{"pk":{"S":"USER#'${USER_ID}'"},"sk":{"S":"CONTAINER#'${CONTAINER_ID}'"}}' \
   --query 'Item.task_arn.S' \
   --output text)
 
@@ -170,7 +171,7 @@ aws --profile personal dynamodb scan \
 aws --profile personal dynamodb get-item \
   --table-name openclaw-containers-dev \
   --region ap-southeast-2 \
-  --key '{"pk":{"S":"USER#andrew"},"sk":{"S":"CONTAINER#oc-18c03ca7"}}'
+  --key '{"pk":{"S":"USER#{USER_ID}"},"sk":{"S":"CONTAINER#{CONTAINER_ID}"}}'
 ```
 
 ## Troubleshooting
@@ -209,9 +210,9 @@ Currently, the orchestrator doesn't have EventBridge integration (Phase 2). Stat
 ```bash
 # Delete all containers (via API)
 for id in $(curl -s https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers \
-  -H "Authorization: Bearer andrew:token" | jq -r '.[].container_id'); do
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}" | jq -r '.[].container_id'); do
   curl -X DELETE https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/$id \
-    -H "Authorization: Bearer andrew:token"
+    -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 done
 
 # Destroy infrastructure (from ../infrastructure/infra/environments/dev)

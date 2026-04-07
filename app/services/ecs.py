@@ -8,6 +8,7 @@ import json
 from app.config import get_settings
 from app.models.container import Container
 from app.services import dynamodb
+from app.services.config_store import store_config
 
 
 def _get_ecs_client():
@@ -15,33 +16,9 @@ def _get_ecs_client():
     return boto3.client("ecs", region_name=settings.dynamodb_region)
 
 
-def _get_ssm_client():
-    settings = get_settings()
-    return boto3.client("ssm", region_name=settings.dynamodb_region)
-
-
 def _generate_container_id() -> str:
     """Generate a container ID."""
     return f"oc-{uuid.uuid4().hex[:8]}"
-
-
-def store_config_in_ssm(user_id: str, container_id: str, config: Dict[str, Any]) -> str:
-    """Store container config in SSM Parameter Store."""
-    settings = get_settings()
-    ssm = _get_ssm_client()
-
-    param_name = f"{settings.ssm_prefix}/{user_id}/{container_id}"
-    config_json = json.dumps(config)
-
-    ssm.put_parameter(
-        Name=param_name,
-        Value=config_json,
-        Type="String",
-        Overwrite=True,
-        Description=f"Config for container {container_id} (user {user_id})",
-    )
-
-    return param_name
 
 
 def create_container(user_id: str, config: Optional[Dict[str, Any]] = None) -> Container:
@@ -58,7 +35,7 @@ def create_container(user_id: str, config: Optional[Dict[str, Any]] = None) -> C
     # Store config in SSM if provided
     config_param_name = None
     if config:
-        config_param_name = store_config_in_ssm(user_id, container_id, config)
+        config_param_name = store_config(user_id, container_id, config)
 
     # Create Container record in PENDING status
     container = Container(
@@ -240,7 +217,7 @@ def handle_task_event(event: Dict[str, Any]) -> None:
         container.updated_at = datetime.utcnow()
         dynamodb.update_container(container)
 
-    elif status in ("STOPPED", "STOPPING", "DEPROVISIONING", "STOPPED"):
+    elif status in ("STOPPED", "STOPPING", "DEPROVISIONING"):
         container.status = "STOPPED"
         container.updated_at = datetime.utcnow()
         dynamodb.update_container(container)

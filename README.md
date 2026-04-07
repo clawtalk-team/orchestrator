@@ -24,25 +24,25 @@ curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/health
 
 # Create a container
 curl -X POST https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers \
-  -H "Authorization: Bearer andrew:my-super-secret-token-12345" \
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # List containers
 curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers \
-  -H "Authorization: Bearer andrew:my-super-secret-token-12345"
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 
 # Get specific container
-curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/oc-18c03ca7 \
-  -H "Authorization: Bearer andrew:my-super-secret-token-12345"
+curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/{CONTAINER_ID} \
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 
 # Delete container
-curl -X DELETE https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/oc-18c03ca7 \
-  -H "Authorization: Bearer andrew:my-super-secret-token-12345"
+curl -X DELETE https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/{CONTAINER_ID} \
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 ```
 
 **Token Format:** `user_id:token_string` (minimum 20 characters total)
-Example: `andrew:my-super-secret-token-12345`
+Example: `{USER_ID}:{YOUR_TOKEN}`
 
 ### Local Development
 ```bash
@@ -54,7 +54,7 @@ curl http://localhost:8000/health
 
 # Create a container
 curl -X POST http://localhost:8000/containers \
-  -H "Authorization: Bearer user-123:test-token-abcdefghijklmnop" \
+  -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-agent"}'
 ```
@@ -64,8 +64,8 @@ curl -X POST http://localhost:8000/containers \
 ### Quick Method (using container ID)
 
 ```bash
-CONTAINER_ID="oc-18c03ca7"
-USER_ID="andrew"
+CONTAINER_ID="{CONTAINER_ID}"
+USER_ID="{USER_ID}"
 
 # 1. Get task ARN from DynamoDB
 TASK_ARN=$(aws --profile personal dynamodb get-item \
@@ -123,7 +123,7 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete deployment and monitoring guid
 Phase 1 uses simple token validation:
 - Format: `Bearer user_id:token_hash`
 - Minimum length: 20 characters
-- Example: `Bearer andrew:my-super-secret-token-12345`
+- Example: `Bearer {USER_ID}:{YOUR_TOKEN}`
 
 Phase 2 will integrate with auth-gateway for full validation.
 
