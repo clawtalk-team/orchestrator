@@ -102,7 +102,7 @@ aws --profile personal logs tail /ecs/openclaw-agent-dev \
   --follow
 ```
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete deployment and monitoring guide.
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for complete deployment and monitoring guide.
 
 ## API Endpoints
 
@@ -133,11 +133,21 @@ Built with:
 - **FastAPI** - Modern Python API framework
 - **AWS Lambda** - Serverless compute (ARM64)
 - **API Gateway HTTP API** - HTTP endpoint
-- **DynamoDB** - Container metadata persistence
+- **DynamoDB** - Container metadata and configuration storage
 - **ECS Fargate** - Container runtime
 - **CloudWatch Logs** - Logging
 
-See [ARCHITECTURE_PLAN.md](./ARCHITECTURE_PLAN.md) for detailed architecture documentation.
+See [docs/IMPLEMENTATION_SUMMARY.md](./docs/IMPLEMENTATION_SUMMARY.md) for implementation details.
+
+## Documentation
+
+Comprehensive documentation is available in the [`docs/`](./docs/) directory:
+
+- **[Getting Started](./docs/README.md)** - Documentation index
+- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Deploy to AWS infrastructure
+- **[E2E Testing](./docs/E2E_TEST_GUIDE.md)** - Run end-to-end tests
+- **[Implementation Summary](./docs/IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+- **[Container Requirements](./docs/CONTAINER_REQUIREMENTS.md)** - Container configuration requirements
 
 ## Development
 
@@ -147,6 +157,10 @@ make install-dev
 
 # Run tests
 make test
+
+# Run E2E tests
+make test-e2e           # Local with DynamoDB Local
+make test-e2e-aws       # Against real AWS DynamoDB
 
 # Run locally
 make docker-up
