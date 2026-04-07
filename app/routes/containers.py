@@ -25,7 +25,6 @@ async def create_container(request: Request, req: ContainerRequest):
     otherwise the container will fail to start.
     """
     user_id = request.state.user_id
-    api_key = request.state.api_key  # From middleware
 
     # Note: User config should already exist in DynamoDB
     # If not, the container will fail to start
@@ -33,7 +32,6 @@ async def create_container(request: Request, req: ContainerRequest):
 
     container = ecs.create_container(
         user_id=user_id,
-        api_key=api_key,  # Pass API key for auth_gateway_api_key
         config=req.config,  # Optional custom config overrides
     )
     return ContainerResponse(

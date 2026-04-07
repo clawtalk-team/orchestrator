@@ -43,7 +43,7 @@ This API manages containerized agent deployments on AWS ECS, providing:
 
 ### Authentication
 
-All endpoints (except `/health`) require API key authentication via the `x-api-key` header.
+All endpoints (except `/health`) require API key authentication via the `Authorization` header with Bearer token format.
 
 ### Container Lifecycle
 
