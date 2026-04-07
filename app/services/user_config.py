@@ -50,6 +50,27 @@ class UserConfigService:
     def __init__(self):
         self.table = _get_table()
 
+    def _process_raw_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process a raw DynamoDB item into a configuration dictionary.
+
+        Args:
+            item: Raw DynamoDB item
+
+        Returns:
+            Dict containing processed config data with converted decimals
+        """
+        config = {}
+
+        # Copy all fields except DynamoDB internal fields
+        excluded_fields = {"pk", "sk", "config_type"}
+        for key, value in item.items():
+            if key not in excluded_fields and value is not None:
+                # Convert Decimal objects to int/float for JSON serialization
+                config[key] = _convert_decimals(value)
+
+        return config
+
     def get_user_config(
         self, user_id: str, config_name: str = "default"
     ) -> Optional[Dict[str, Any]]:
@@ -77,20 +98,7 @@ class UserConfigService:
         if "Item" not in response:
             return None
 
-        item = response["Item"]
-        config = {}
-
-        # Copy all fields except DynamoDB internal fields
-        # This supports arbitrary JSON fields
-        # Exclude None values as well (don't return empty fields)
-        # BUT include created_at and updated_at for the response
-        excluded_fields = {"pk", "sk", "config_type"}
-        for key, value in item.items():
-            if key not in excluded_fields and value is not None:
-                # Convert Decimal objects to int/float for JSON serialization
-                config[key] = _convert_decimals(value)
-
-        return config
+        return self._process_raw_item(response["Item"])
 
     def save_user_config(
         self,
@@ -98,7 +106,7 @@ class UserConfigService:
         config: Dict[str, Any],
         config_name: str = "default",
         overwrite: bool = False,
-    ) -> None:
+    ) -> Dict[str, str]:
         """
         Save user configuration (plaintext, no encryption).
 
@@ -117,17 +125,13 @@ class UserConfigService:
         existing_item_data = raw_item.get("Item")
 
         # If not overwriting, merge with existing config
-        if not overwrite:
-            existing = self.get_user_config(user_id, config_name) or {}
+        if not overwrite and existing_item_data:
+            # Process existing item to get config data (avoids redundant get_item call)
+            existing = self._process_raw_item(existing_item_data)
             # Merge: new values override old ones
             merged = {**existing, **config}
             config = merged
-        else:
-            # When overwriting, delete the old item first to ensure clean slate
-            if existing_item_data:
-                self.table.delete_item(
-                    Key={"pk": f"USER#{user_id}", "sk": f"CONFIG#{config_name}"}
-                )
+        # Note: When overwriting, put_item replaces the item entirely, no delete needed
 
         item = {
             "pk": f"USER#{user_id}",
@@ -151,6 +155,12 @@ class UserConfigService:
             item["created_at"] = now.isoformat()
 
         self.table.put_item(Item=item)
+
+        # Return timestamps so caller doesn't need another database call
+        return {
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"]
+        }
 
     def get_system_config(self) -> Dict[str, Any]:
         """
@@ -179,6 +189,7 @@ class UserConfigService:
             "openclaw_url": item.get("openclaw_url"),
             "openclaw_token": item.get("openclaw_token"),
             "voice_gateway_url": item.get("voice_gateway_url"),
+            "updated_at": item.get("updated_at"),  # Include timestamp to avoid redundant read
         }
         # Convert any Decimal values to int/float
         return _convert_decimals(config)

@@ -4,6 +4,7 @@ Configuration API endpoints.
 Provides CRUD operations for user and system configurations stored in DynamoDB.
 """
 
+import hmac
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -33,7 +34,6 @@ def _is_admin(request: Request) -> bool:
         return False
 
     # Constant-time comparison to prevent timing attacks
-    import hmac
     return hmac.compare_digest(api_key, settings.master_api_key)
 
 
@@ -84,9 +84,10 @@ async def list_user_configs(request: Request) -> List[UserConfigResponse]:
             continue
 
         config_name = sk[7:]  # Remove "CONFIG#" prefix
-        config_data = config_service.get_user_config(user_id, config_name) or {}
+        # Process raw item directly to avoid N+1 query problem
+        config_data = config_service._process_raw_item(item)
 
-        # config_data now includes created_at and updated_at from get_user_config
+        # config_data includes created_at and updated_at from raw item
         configs.append({
             "config_name": config_name,
             "user_id": user_id,
@@ -128,21 +129,20 @@ async def create_user_config(
     # Convert to dict and remove config_name (not stored in DynamoDB item)
     config_dict = config.model_dump(exclude={"config_name"}, exclude_none=True)
 
-    # Save the config
-    config_service.save_user_config(
+    # Save the config and get timestamps (avoids redundant database read)
+    timestamps = config_service.save_user_config(
         user_id=user_id,
         config=config_dict,
         config_name=config.config_name,
         overwrite=False
     )
 
-    # Retrieve to get timestamps (get_user_config now includes created_at/updated_at)
-    created_config = config_service.get_user_config(user_id, config.config_name) or {}
-
+    # Construct response using saved data and returned timestamps
     response_data = {
         "config_name": config.config_name,
         "user_id": user_id,
-        **created_config
+        **config_dict,
+        **timestamps
     }
 
     return UserConfigResponse(**response_data)
@@ -170,18 +170,7 @@ async def get_system_config(request: Request) -> SystemConfigResponse:
     config_service = UserConfigService()
     system_config = config_service.get_system_config()
 
-    # Get raw item for timestamp
-    from app.services.dynamodb import _get_table
-
-    table = _get_table()
-    item_response = table.get_item(
-        Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"}
-    )
-
-    raw_item = item_response.get("Item", {})
-    if "updated_at" in raw_item:
-        system_config["updated_at"] = raw_item["updated_at"]
-
+    # System config now includes updated_at, no redundant database read needed
     return SystemConfigResponse(**system_config)
 
 
@@ -253,20 +242,8 @@ async def update_system_config(
     # Save system config
     config_service.save_system_config(config_dict)
 
-    # Retrieve updated config
+    # Retrieve updated config (now includes updated_at, no redundant read)
     updated_config = config_service.get_system_config()
-
-    # Get raw item for timestamp
-    from app.services.dynamodb import _get_table
-
-    table = _get_table()
-    item_response = table.get_item(
-        Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"}
-    )
-
-    raw_item = item_response.get("Item", {})
-    if "updated_at" in raw_item:
-        updated_config["updated_at"] = raw_item["updated_at"]
 
     return SystemConfigResponse(**updated_config)
 
@@ -301,22 +278,35 @@ async def update_user_config(
     # Convert to dict, excluding None values
     config_dict = config.model_dump(exclude_none=True)
 
+    # Get existing config for merge case
+    existing_config = config_service.get_user_config(user_id, config_name) if not overwrite else None
+
     # Save the config (will merge or overwrite based on parameter)
-    config_service.save_user_config(
+    timestamps = config_service.save_user_config(
         user_id=user_id,
         config=config_dict,
         config_name=config_name,
         overwrite=overwrite
     )
 
-    # Retrieve updated config (get_user_config now includes created_at/updated_at)
-    updated_config = config_service.get_user_config(user_id, config_name) or {}
-
-    response_data = {
-        "config_name": config_name,
-        "user_id": user_id,
-        **updated_config
-    }
+    # Construct response based on operation type
+    if overwrite:
+        # For overwrite, response is just the new config + timestamps
+        response_data = {
+            "config_name": config_name,
+            "user_id": user_id,
+            **config_dict,
+            **timestamps
+        }
+    else:
+        # For merge, combine existing (if any) + new config + timestamps
+        merged_config = {**(existing_config or {}), **config_dict}
+        response_data = {
+            "config_name": config_name,
+            "user_id": user_id,
+            **merged_config,
+            **timestamps
+        }
 
     return UserConfigResponse(**response_data)
 
