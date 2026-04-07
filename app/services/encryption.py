@@ -5,8 +5,9 @@ Uses Fernet (symmetric encryption) with a key from environment.
 For production, consider using AWS KMS or HashiCorp Vault.
 """
 
-import os
 import base64
+import os
+
 from cryptography.fernet import Fernet
 
 
@@ -21,7 +22,9 @@ class Encryptor:
         if not key:
             # For development/testing only: use a static fallback key
             # In production, ENCRYPTION_KEY must be set or service should fail
-            print("WARNING: ENCRYPTION_KEY not set, using static development key. DO NOT USE IN PRODUCTION!")
+            print(
+                "WARNING: ENCRYPTION_KEY not set, using static development key. DO NOT USE IN PRODUCTION!"
+            )
             # Generate a consistent Fernet key for development
             dev_key = "dev-key-for-testing-only-do-not-use-in-production-12345678"
             key = base64.urlsafe_b64encode(dev_key[:32].ljust(32).encode()).decode()

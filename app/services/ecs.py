@@ -1,9 +1,10 @@
-import boto3
+import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
-import json
+from typing import Any, Dict, Optional
+
+import boto3
 
 from app.config import get_settings
 from app.models.container import Container
@@ -107,7 +108,9 @@ def create_container(
 
         # Get VPC configuration from environment
         subnets = [s.strip() for s in settings.ecs_subnets.split(",") if s.strip()]
-        security_groups = [sg.strip() for sg in settings.ecs_security_groups.split(",") if sg.strip()]
+        security_groups = [
+            sg.strip() for sg in settings.ecs_security_groups.split(",") if sg.strip()
+        ]
 
         response = ecs.run_task(
             cluster=settings.ecs_cluster_name,

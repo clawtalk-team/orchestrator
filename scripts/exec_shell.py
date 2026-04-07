@@ -14,12 +14,15 @@ Prerequisites:
 """
 
 import argparse
-import boto3
-import sys
 import subprocess
+import sys
+
+import boto3
 
 
-def get_task_arn(container_id: str, user_id: str, env: str, profile: str, region: str) -> str:
+def get_task_arn(
+    container_id: str, user_id: str, env: str, profile: str, region: str
+) -> str:
     """Look up task ARN from DynamoDB."""
     table_name = f"openclaw-containers-{env}"
 
@@ -30,10 +33,7 @@ def get_task_arn(container_id: str, user_id: str, env: str, profile: str, region
 
     response = dynamodb.get_item(
         TableName=table_name,
-        Key={
-            "pk": {"S": f"USER#{user_id}"},
-            "sk": {"S": f"CONTAINER#{container_id}"}
-        }
+        Key={"pk": {"S": f"USER#{user_id}"}, "sk": {"S": f"CONTAINER#{container_id}"}},
     )
 
     item = response.get("Item")
@@ -55,7 +55,7 @@ def exec_shell(
     container_name: str,
     profile: str,
     region: str,
-    command: str = "/bin/bash"
+    command: str = "/bin/bash",
 ):
     """Execute interactive shell on ECS task."""
     task_id = task_arn.split("/")[-1]
@@ -67,14 +67,22 @@ def exec_shell(
 
     # Build AWS CLI command
     cmd = [
-        "aws", "ecs", "execute-command",
-        "--profile", profile,
-        "--region", region,
-        "--cluster", cluster,
-        "--task", task_id,
-        "--container", container_name,
+        "aws",
+        "ecs",
+        "execute-command",
+        "--profile",
+        profile,
+        "--region",
+        region,
+        "--cluster",
+        cluster,
+        "--task",
+        task_id,
+        "--container",
+        container_name,
         "--interactive",
-        "--command", command
+        "--command",
+        command,
     ]
 
     try:
@@ -90,16 +98,24 @@ def exec_shell(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Get shell on openclaw-agent container")
-    parser.add_argument("container_id", nargs="?", help="Container ID (e.g., oc-abc12345)")
+    parser = argparse.ArgumentParser(
+        description="Get shell on openclaw-agent container"
+    )
+    parser.add_argument(
+        "container_id", nargs="?", help="Container ID (e.g., oc-abc12345)"
+    )
     parser.add_argument("--user-id", help="User ID who owns the container")
-    parser.add_argument("--task-arn", help="Task ARN to connect to (alternative to container-id)")
+    parser.add_argument(
+        "--task-arn", help="Task ARN to connect to (alternative to container-id)"
+    )
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
     parser.add_argument("--cluster", default="clawtalk-dev", help="ECS cluster name")
     parser.add_argument("--container", default="openclaw-agent", help="Container name")
-    parser.add_argument("--command", default="/bin/bash", help="Command to execute (default: /bin/bash)")
+    parser.add_argument(
+        "--command", default="/bin/bash", help="Command to execute (default: /bin/bash)"
+    )
 
     args = parser.parse_args()
 
@@ -108,22 +124,13 @@ def main():
         task_arn = args.task_arn
     elif args.container_id and args.user_id:
         task_arn = get_task_arn(
-            args.container_id,
-            args.user_id,
-            args.env,
-            args.profile,
-            args.region
+            args.container_id, args.user_id, args.env, args.profile, args.region
         )
     else:
         parser.error("Either provide CONTAINER_ID with --user-id, or use --task-arn")
 
     exec_shell(
-        task_arn,
-        args.cluster,
-        args.container,
-        args.profile,
-        args.region,
-        args.command
+        task_arn, args.cluster, args.container, args.profile, args.region, args.command
     )
 
 

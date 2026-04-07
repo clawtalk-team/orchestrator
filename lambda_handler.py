@@ -1,6 +1,8 @@
 import os
 import sys
+
 from mangum import Mangum
+
 from app.main import app
 from app.services.ecs import handle_task_event
 

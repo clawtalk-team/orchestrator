@@ -1,10 +1,12 @@
 """Tests for ECS service."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import patch, MagicMock
-from app.services import ecs
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from app.models.container import Container
+from app.services import ecs
 
 
 def test_generate_container_id():
@@ -21,9 +23,7 @@ def test_extract_container_endpoint():
         "attachments": [
             {
                 "type": "ElasticNetworkInterface",
-                "details": [
-                    {"name": "privateIPv4Address", "value": "10.0.1.45"}
-                ],
+                "details": [{"name": "privateIPv4Address", "value": "10.0.1.45"}],
             }
         ]
     }
@@ -52,9 +52,7 @@ def test_extract_container_endpoint_wrong_type():
         "attachments": [
             {
                 "type": "SomeOtherType",
-                "details": [
-                    {"name": "privateIPv4Address", "value": "10.0.1.45"}
-                ],
+                "details": [{"name": "privateIPv4Address", "value": "10.0.1.45"}],
             }
         ]
     }
@@ -93,9 +91,7 @@ def test_handle_task_event_running(aws_mocks):
             "attachments": [
                 {
                     "type": "ElasticNetworkInterface",
-                    "details": [
-                        {"name": "privateIPv4Address", "value": "10.0.1.45"}
-                    ],
+                    "details": [{"name": "privateIPv4Address", "value": "10.0.1.45"}],
                 }
             ],
         }

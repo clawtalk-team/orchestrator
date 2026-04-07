@@ -7,8 +7,9 @@ Usage: python scripts/list_containers.py [--env ENV] [--user-id USER_ID]
 """
 
 import argparse
-import boto3
 from typing import Optional
+
+import boto3
 from tabulate import tabulate
 
 
@@ -16,7 +17,7 @@ def list_containers(
     env: str = "dev",
     user_id: Optional[str] = None,
     profile: str = "personal",
-    region: str = "ap-southeast-2"
+    region: str = "ap-southeast-2",
 ):
     """List all containers from DynamoDB."""
     table_name = f"openclaw-containers-{env}"
@@ -33,9 +34,7 @@ def list_containers(
         query_kwargs = {
             "TableName": table_name,
             "KeyConditionExpression": "pk = :pk",
-            "ExpressionAttributeValues": {
-                ":pk": {"S": f"USER#{user_id}"}
-            }
+            "ExpressionAttributeValues": {":pk": {"S": f"USER#{user_id}"}},
         }
         while True:
             response = dynamodb.query(**query_kwargs)
@@ -68,17 +67,27 @@ def list_containers(
         created = item.get("created_at", {}).get("S", "")
         health = item.get("health_status", {}).get("S", "")
 
-        table_data.append([
-            container_id,
-            user,
-            status,
-            health,
-            ip,
-            task_arn.split("/")[-1] if task_arn else "",
-            created
-        ])
+        table_data.append(
+            [
+                container_id,
+                user,
+                status,
+                health,
+                ip,
+                task_arn.split("/")[-1] if task_arn else "",
+                created,
+            ]
+        )
 
-    headers = ["Container ID", "User ID", "Status", "Health", "IP Address", "Task ID", "Created At"]
+    headers = [
+        "Container ID",
+        "User ID",
+        "Status",
+        "Health",
+        "IP Address",
+        "Task ID",
+        "Created At",
+    ]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
     print(f"\nTotal containers: {len(items)}")
 
@@ -93,10 +102,7 @@ def main():
     args = parser.parse_args()
 
     list_containers(
-        env=args.env,
-        user_id=args.user_id,
-        profile=args.profile,
-        region=args.region
+        env=args.env, user_id=args.user_id, profile=args.profile, region=args.region
     )
 
 

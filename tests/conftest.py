@@ -1,9 +1,10 @@
 import os
+from unittest.mock import MagicMock, patch
+
+import boto3
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from moto import mock_aws
-import boto3
 
 # Set up environment for testing
 # Don't set DYNAMODB_ENDPOINT - let moto intercept boto3 calls

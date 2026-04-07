@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional
 
-from app.models.container import ContainerRequest, ContainerResponse, ContainerHealthResponse
-from app.services import ecs, dynamodb
+from fastapi import APIRouter, HTTPException, Request
+
+from app.models.container import (ContainerHealthResponse, ContainerRequest,
+                                  ContainerResponse)
+from app.services import dynamodb, ecs
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 

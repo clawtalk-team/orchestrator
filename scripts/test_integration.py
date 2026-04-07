@@ -15,12 +15,7 @@ def run_command(cmd: list[str], description: str, expect_failure: bool = False) 
     print(f"Command: {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
         if expect_failure:
             if result.returncode != 0:
@@ -50,62 +45,89 @@ def main():
     scripts_dir = Path(__file__).parent
     python = sys.executable
 
-    print("="*60)
+    print("=" * 60)
     print("INTEGRATION TESTS - Error Handling & Validation")
-    print("="*60)
+    print("=" * 60)
 
     tests = []
 
     # Test 1: launch_container.py missing required args
-    tests.append(run_command(
-        [python, str(scripts_dir / "launch_container.py")],
-        "launch_container.py - missing required args",
-        expect_failure=True
-    ))
+    tests.append(
+        run_command(
+            [python, str(scripts_dir / "launch_container.py")],
+            "launch_container.py - missing required args",
+            expect_failure=True,
+        )
+    )
 
     # Test 2: launch_container.py with invalid JSON config
-    tests.append(run_command(
-        [python, str(scripts_dir / "launch_container.py"),
-         "--user-id", "test", "--token", "test123456789012345",
-         "--config", "invalid-json"],
-        "launch_container.py - invalid JSON config",
-        expect_failure=True
-    ))
+    tests.append(
+        run_command(
+            [
+                python,
+                str(scripts_dir / "launch_container.py"),
+                "--user-id",
+                "test",
+                "--token",
+                "test123456789012345",
+                "--config",
+                "invalid-json",
+            ],
+            "launch_container.py - invalid JSON config",
+            expect_failure=True,
+        )
+    )
 
     # Test 3: launch_container.py with valid JSON config (will fail on API call, but validates parsing)
-    tests.append(run_command(
-        [python, str(scripts_dir / "launch_container.py"),
-         "--user-id", "test", "--token", "test123456789012345",
-         "--config", '{"memory": 512}', "--local"],
-        "launch_container.py - valid config but no API",
-        expect_failure=True  # Will fail connecting to localhost:8000
-    ))
+    tests.append(
+        run_command(
+            [
+                python,
+                str(scripts_dir / "launch_container.py"),
+                "--user-id",
+                "test",
+                "--token",
+                "test123456789012345",
+                "--config",
+                '{"memory": 512}',
+                "--local",
+            ],
+            "launch_container.py - valid config but no API",
+            expect_failure=True,  # Will fail connecting to localhost:8000
+        )
+    )
 
     # Test 4: get_logs.py missing user-id
-    tests.append(run_command(
-        [python, str(scripts_dir / "get_logs.py"), "oc-test123"],
-        "get_logs.py - missing user-id",
-        expect_failure=True
-    ))
+    tests.append(
+        run_command(
+            [python, str(scripts_dir / "get_logs.py"), "oc-test123"],
+            "get_logs.py - missing user-id",
+            expect_failure=True,
+        )
+    )
 
     # Test 5: exec_shell.py missing user-id
-    tests.append(run_command(
-        [python, str(scripts_dir / "exec_shell.py"), "oc-test123"],
-        "exec_shell.py - missing user-id",
-        expect_failure=True
-    ))
+    tests.append(
+        run_command(
+            [python, str(scripts_dir / "exec_shell.py"), "oc-test123"],
+            "exec_shell.py - missing user-id",
+            expect_failure=True,
+        )
+    )
 
     # Test 6: delete_containers.py missing user-id
-    tests.append(run_command(
-        [python, str(scripts_dir / "delete_containers.py"), "oc-test123"],
-        "delete_containers.py - missing user-id",
-        expect_failure=True
-    ))
+    tests.append(
+        run_command(
+            [python, str(scripts_dir / "delete_containers.py"), "oc-test123"],
+            "delete_containers.py - missing user-id",
+            expect_failure=True,
+        )
+    )
 
     # Print summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     passed = sum(tests)
     total = len(tests)

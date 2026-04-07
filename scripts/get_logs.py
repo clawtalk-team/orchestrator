@@ -9,13 +9,16 @@ Usage:
 """
 
 import argparse
-import boto3
 import sys
 import time
 from datetime import datetime, timedelta
 
+import boto3
 
-def get_task_arn(container_id: str, user_id: str, env: str, profile: str, region: str) -> str:
+
+def get_task_arn(
+    container_id: str, user_id: str, env: str, profile: str, region: str
+) -> str:
     """Look up task ARN from DynamoDB."""
     table_name = f"openclaw-containers-{env}"
 
@@ -26,10 +29,7 @@ def get_task_arn(container_id: str, user_id: str, env: str, profile: str, region
 
     response = dynamodb.get_item(
         TableName=table_name,
-        Key={
-            "pk": {"S": f"USER#{user_id}"},
-            "sk": {"S": f"CONTAINER#{container_id}"}
-        }
+        Key={"pk": {"S": f"USER#{user_id}"}, "sk": {"S": f"CONTAINER#{container_id}"}},
     )
 
     item = response.get("Item")
@@ -45,7 +45,14 @@ def get_task_arn(container_id: str, user_id: str, env: str, profile: str, region
     return task_arn
 
 
-def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = False, since_minutes: int = 30):
+def tail_logs(
+    task_id: str,
+    env: str,
+    profile: str,
+    region: str,
+    follow: bool = False,
+    since_minutes: int = 30,
+):
     """Tail CloudWatch logs for a task."""
     log_group = f"/ecs/openclaw-agent-{env}"
 
@@ -57,7 +64,9 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
     print()
 
     # Get log streams that match the task ID
-    start_time = int((datetime.now() - timedelta(minutes=since_minutes)).timestamp() * 1000)
+    start_time = int(
+        (datetime.now() - timedelta(minutes=since_minutes)).timestamp() * 1000
+    )
 
     try:
         # Use filter_log_events to search across all streams
@@ -65,7 +74,7 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
             "logGroupName": log_group,
             "startTime": start_time,
             "filterPattern": task_id,
-            "limit": 100
+            "limit": 100,
         }
 
         if follow:
@@ -82,9 +91,13 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
                         events = response.get("events", [])
 
                         for event in events:
-                            timestamp = datetime.fromtimestamp(event["timestamp"] / 1000)
+                            timestamp = datetime.fromtimestamp(
+                                event["timestamp"] / 1000
+                            )
                             message = event["message"].rstrip()
-                            print(f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} {message}")
+                            print(
+                                f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} {message}"
+                            )
                             last_timestamp = max(last_timestamp, event["timestamp"] + 1)
 
                         # Handle pagination
@@ -114,7 +127,9 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
                     break
 
             if not all_events:
-                print(f"No logs found for task {task_id} in the last {since_minutes} minutes")
+                print(
+                    f"No logs found for task {task_id} in the last {since_minutes} minutes"
+                )
                 return
 
             for event in all_events:
@@ -131,15 +146,28 @@ def tail_logs(task_id: str, env: str, profile: str, region: str, follow: bool = 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Get logs for openclaw-agent container")
-    parser.add_argument("container_id", nargs="?", help="Container ID (e.g., oc-abc12345)")
+    parser = argparse.ArgumentParser(
+        description="Get logs for openclaw-agent container"
+    )
+    parser.add_argument(
+        "container_id", nargs="?", help="Container ID (e.g., oc-abc12345)"
+    )
     parser.add_argument("--user-id", help="User ID who owns the container")
-    parser.add_argument("--task-id", help="Task ID to fetch logs for (alternative to container-id)")
+    parser.add_argument(
+        "--task-id", help="Task ID to fetch logs for (alternative to container-id)"
+    )
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
-    parser.add_argument("--follow", "-f", action="store_true", help="Follow logs in real-time")
-    parser.add_argument("--since", type=int, default=30, help="Show logs from last N minutes (default: 30)")
+    parser.add_argument(
+        "--follow", "-f", action="store_true", help="Follow logs in real-time"
+    )
+    parser.add_argument(
+        "--since",
+        type=int,
+        default=30,
+        help="Show logs from last N minutes (default: 30)",
+    )
 
     args = parser.parse_args()
 
@@ -148,11 +176,7 @@ def main():
         task_id = args.task_id
     elif args.container_id and args.user_id:
         task_arn = get_task_arn(
-            args.container_id,
-            args.user_id,
-            args.env,
-            args.profile,
-            args.region
+            args.container_id, args.user_id, args.env, args.profile, args.region
         )
         task_id = task_arn.split("/")[-1]
     else:
@@ -164,7 +188,7 @@ def main():
         args.profile,
         args.region,
         follow=args.follow,
-        since_minutes=args.since
+        since_minutes=args.since,
     )
 
 

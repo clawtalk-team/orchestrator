@@ -2,6 +2,7 @@ import json
 import os
 from functools import lru_cache
 from typing import Optional
+
 from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
@@ -14,8 +15,11 @@ def _load_ssm_config() -> None:
     try:
         import boto3
         from botocore.exceptions import ClientError
+
         # Lambda sets AWS_REGION automatically, fall back to DYNAMODB_REGION or default
-        region = os.environ.get("AWS_REGION") or os.environ.get("DYNAMODB_REGION", "us-east-1")
+        region = os.environ.get("AWS_REGION") or os.environ.get(
+            "DYNAMODB_REGION", "us-east-1"
+        )
         ssm = boto3.client("ssm", region_name=region)
         response = ssm.get_parameter(Name=path, WithDecryption=True)
         config = json.loads(response["Parameter"]["Value"])
@@ -40,7 +44,9 @@ class Settings(BaseSettings):
 
     # DynamoDB
     dynamodb_endpoint: Optional[str] = None
-    dynamodb_region: str = "us-east-1"  # Lambda sets AWS_REGION, can also use DYNAMODB_REGION
+    dynamodb_region: str = (
+        "us-east-1"  # Lambda sets AWS_REGION, can also use DYNAMODB_REGION
+    )
     aws_access_key_id: str = "local"
     aws_secret_access_key: str = "local"
     containers_table: str = "openclaw-containers"

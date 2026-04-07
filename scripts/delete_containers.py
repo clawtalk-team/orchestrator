@@ -18,17 +18,14 @@ Usage:
 """
 
 import argparse
-import boto3
 import sys
 from typing import List, Optional
 
+import boto3
+
 
 def get_containers(
-    user_id: str,
-    env: str,
-    profile: str,
-    region: str,
-    status: Optional[str] = None
+    user_id: str, env: str, profile: str, region: str, status: Optional[str] = None
 ) -> List[dict]:
     """Get containers for a user, optionally filtered by status."""
     table_name = f"openclaw-containers-{env}"
@@ -42,7 +39,7 @@ def get_containers(
     query_kwargs = {
         "TableName": table_name,
         "KeyConditionExpression": "pk = :pk",
-        "ExpressionAttributeValues": {":pk": {"S": f"USER#{user_id}"}}
+        "ExpressionAttributeValues": {":pk": {"S": f"USER#{user_id}"}},
     }
     if status:
         query_kwargs["FilterExpression"] = "#s = :status"
@@ -57,12 +54,14 @@ def get_containers(
         # Parse items
         for item in response.get("Items", []):
             container = {
-                "container_id": item.get("sk", {}).get("S", "").replace("CONTAINER#", ""),
+                "container_id": item.get("sk", {})
+                .get("S", "")
+                .replace("CONTAINER#", ""),
                 "user_id": item.get("user_id", {}).get("S", ""),
                 "status": item.get("status", {}).get("S", ""),
                 "task_arn": item.get("task_arn", {}).get("S", ""),
                 "pk": item.get("pk", {}).get("S", ""),
-                "sk": item.get("sk", {}).get("S", "")
+                "sk": item.get("sk", {}).get("S", ""),
             }
             containers.append(container)
 
@@ -80,7 +79,7 @@ def delete_container(
     profile: str,
     region: str,
     cluster: str,
-    dry_run: bool = False
+    dry_run: bool = False,
 ):
     """Delete a single container."""
     container_id = container["container_id"]
@@ -106,7 +105,7 @@ def delete_container(
             ecs.stop_task(
                 cluster=cluster,
                 task=task_arn,
-                reason=f"Container {container_id} deleted via script"
+                reason=f"Container {container_id} deleted via script",
             )
             print(f"    ✓ ECS task stopped")
         except ecs.exceptions.ClientException as e:
@@ -122,10 +121,7 @@ def delete_container(
         print(f"    Deleting DynamoDB record...")
         dynamodb.delete_item(
             TableName=table_name,
-            Key={
-                "pk": {"S": container["pk"]},
-                "sk": {"S": container["sk"]}
-            }
+            Key={"pk": {"S": container["pk"]}, "sk": {"S": container["sk"]}},
         )
         print(f"    ✓ DynamoDB record deleted")
     except Exception as e:
@@ -135,15 +131,27 @@ def delete_container(
 def main():
     parser = argparse.ArgumentParser(description="Delete openclaw-agent containers")
     parser.add_argument("container_ids", nargs="*", help="Container IDs to delete")
-    parser.add_argument("--user-id", required=True, help="User ID who owns the containers")
-    parser.add_argument("--all", action="store_true", help="Delete all containers for the user")
-    parser.add_argument("--status", help="Delete containers with specific status (e.g., STOPPED)")
+    parser.add_argument(
+        "--user-id", required=True, help="User ID who owns the containers"
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Delete all containers for the user"
+    )
+    parser.add_argument(
+        "--status", help="Delete containers with specific status (e.g., STOPPED)"
+    )
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
     parser.add_argument("--cluster", default="clawtalk-dev", help="ECS cluster name")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without deleting")
-    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted without deleting",
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
 
     args = parser.parse_args()
 
@@ -153,11 +161,7 @@ def main():
     if args.all or args.status:
         # Fetch containers based on criteria
         containers_to_delete = get_containers(
-            args.user_id,
-            args.env,
-            args.profile,
-            args.region,
-            status=args.status
+            args.user_id, args.env, args.profile, args.region, status=args.status
         )
 
         if not containers_to_delete:
@@ -175,8 +179,8 @@ def main():
                 TableName=table_name,
                 Key={
                     "pk": {"S": f"USER#{args.user_id}"},
-                    "sk": {"S": f"CONTAINER#{container_id}"}
-                }
+                    "sk": {"S": f"CONTAINER#{container_id}"},
+                },
             )
 
             item = response.get("Item")
@@ -185,12 +189,14 @@ def main():
                 continue
 
             container = {
-                "container_id": item.get("sk", {}).get("S", "").replace("CONTAINER#", ""),
+                "container_id": item.get("sk", {})
+                .get("S", "")
+                .replace("CONTAINER#", ""),
                 "user_id": item.get("user_id", {}).get("S", ""),
                 "status": item.get("status", {}).get("S", ""),
                 "task_arn": item.get("task_arn", {}).get("S", ""),
                 "pk": item.get("pk", {}).get("S", ""),
-                "sk": item.get("sk", {}).get("S", "")
+                "sk": item.get("sk", {}).get("S", ""),
             }
             containers_to_delete.append(container)
     else:
@@ -208,7 +214,9 @@ def main():
     else:
         # Confirm deletion
         if not args.yes:
-            response = input(f"\nDelete {len(containers_to_delete)} container(s)? [y/N]: ")
+            response = input(
+                f"\nDelete {len(containers_to_delete)} container(s)? [y/N]: "
+            )
             if response.lower() not in ["y", "yes"]:
                 print("Aborted.")
                 sys.exit(0)
@@ -221,7 +229,7 @@ def main():
             args.profile,
             args.region,
             args.cluster,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
         )
 
     print(f"\n{'=' * 60}")

@@ -14,10 +14,10 @@ Note: Encryption is skipped in initial implementation for simplicity.
 Secrets are stored in plaintext for now.
 """
 
-from typing import Optional, Dict, Any
-from datetime import datetime, timezone
 import json
 import os
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from app.services.dynamodb import _get_table
 
@@ -28,7 +28,9 @@ class UserConfigService:
     def __init__(self):
         self.table = _get_table()
 
-    def get_user_config(self, user_id: str, config_name: str = "default") -> Optional[Dict[str, Any]]:
+    def get_user_config(
+        self, user_id: str, config_name: str = "default"
+    ) -> Optional[Dict[str, Any]]:
         """
         Get user's configuration (plaintext, no encryption).
 
@@ -144,9 +146,7 @@ class UserConfigService:
         Returns:
             Dict containing system config (URLs, defaults, etc.)
         """
-        response = self.table.get_item(
-            Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"}
-        )
+        response = self.table.get_item(Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"})
 
         if "Item" not in response:
             # Return defaults if not found
@@ -154,7 +154,8 @@ class UserConfigService:
 
             settings = get_settings()
             return {
-                "auth_gateway_url": settings.auth_gateway_url or "http://localhost:8001",
+                "auth_gateway_url": settings.auth_gateway_url
+                or "http://localhost:8001",
                 "openclaw_url": "http://localhost:18789",
                 "voice_gateway_url": "ws://localhost:9090",
             }

@@ -1,9 +1,10 @@
-import boto3
+import json
 import os
 from datetime import datetime
-from typing import Optional, List
 from decimal import Decimal
-import json
+from typing import List, Optional
+
+import boto3
 
 from app.config import get_settings
 from app.models.container import Container, HealthData
@@ -89,14 +90,16 @@ def _serialize_container(container: Container) -> dict:
     if container.last_health_check:
         item["last_health_check"] = container.last_health_check.isoformat()
     if container.health_data:
-        item["health_data"] = json.dumps({
-            "agents_running": container.health_data.agents_running,
-            "uptime_seconds": container.health_data.uptime_seconds,
-            "memory_mb": container.health_data.memory_mb,
-            "cpu_percent": container.health_data.cpu_percent,
-            "version": container.health_data.version,
-            "agents": container.health_data.agents,
-        })
+        item["health_data"] = json.dumps(
+            {
+                "agents_running": container.health_data.agents_running,
+                "uptime_seconds": container.health_data.uptime_seconds,
+                "memory_mb": container.health_data.memory_mb,
+                "cpu_percent": container.health_data.cpu_percent,
+                "version": container.health_data.version,
+                "agents": container.health_data.agents,
+            }
+        )
 
     return item
 

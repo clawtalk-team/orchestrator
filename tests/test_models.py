@@ -1,7 +1,9 @@
 """Unit tests for models."""
 
-import pytest
 from datetime import datetime
+
+import pytest
+
 from app.models.container import Container, ContainerRequest, HealthData
 
 

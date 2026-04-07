@@ -11,9 +11,10 @@ Usage:
 """
 
 import argparse
-import boto3
-from datetime import datetime
 import sys
+from datetime import datetime
+
+import boto3
 
 
 def setup_test_config(
@@ -131,15 +132,15 @@ def setup_test_config(
     print(f"  3. View config in DynamoDB:")
     print(f"     aws dynamodb get-item \\")
     print(f"       --table-name {table_name} \\")
-    print(f"       --key '{{\"pk\":{{\"S\":\"USER#{user_id}\"}},\"sk\":{{\"S\":\"CONFIG#primary\"}}}}' \\")
+    print(
+        f'       --key \'{{"pk":{{"S":"USER#{user_id}"}},"sk":{{"S":"CONFIG#primary"}}}}\' \\'
+    )
     print(f"       --endpoint-url {endpoint_url} \\")
     print(f"       --region {region}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Setup test configuration in DynamoDB"
-    )
+    parser = argparse.ArgumentParser(description="Setup test configuration in DynamoDB")
     parser.add_argument(
         "--user-id", required=True, help="User ID (e.g., test-user-123)"
     )
@@ -152,7 +153,9 @@ def main():
         help="DynamoDB endpoint (default: http://localhost:8000)",
     )
     parser.add_argument(
-        "--region", default="ap-southeast-2", help="AWS region (default: ap-southeast-2)"
+        "--region",
+        default="ap-southeast-2",
+        help="AWS region (default: ap-southeast-2)",
     )
     parser.add_argument(
         "--table",

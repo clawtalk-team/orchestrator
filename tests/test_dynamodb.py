@@ -1,9 +1,11 @@
 """Unit tests for DynamoDB service."""
 
-import pytest
 from datetime import datetime
-from app.services import dynamodb
+
+import pytest
+
 from app.models.container import Container, HealthData
+from app.services import dynamodb
 
 
 @pytest.fixture

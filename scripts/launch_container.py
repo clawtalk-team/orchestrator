@@ -23,6 +23,7 @@ import json
 import sys
 import time
 from typing import Optional
+
 import requests
 
 
@@ -33,7 +34,7 @@ def launch_container(
     name: Optional[str] = None,
     config: Optional[dict] = None,
     wait: bool = False,
-    wait_timeout: int = 300
+    wait_timeout: int = 300,
 ) -> dict:
     """Launch a new container via the orchestrator API."""
 
@@ -41,7 +42,7 @@ def launch_container(
     auth_token = f"{user_id}:{token}"
     headers = {
         "Authorization": f"Bearer {auth_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     # Build request body
@@ -61,15 +62,12 @@ def launch_container(
     # Create container
     try:
         response = requests.post(
-            f"{base_url}/containers",
-            headers=headers,
-            json=body,
-            timeout=30
+            f"{base_url}/containers", headers=headers, json=body, timeout=30
         )
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"✗ Error creating container: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+        if hasattr(e, "response") and e.response is not None:
             print(f"Response: {e.response.text}")
         sys.exit(1)
 
@@ -87,7 +85,7 @@ def launch_container(
     # Wait for container to become healthy if requested
     if wait:
         print(f"Waiting for container to become healthy (timeout: {wait_timeout}s)...")
-        container_id = container['container_id']
+        container_id = container["container_id"]
         start_time = time.time()
 
         while time.time() - start_time < wait_timeout:
@@ -95,18 +93,18 @@ def launch_container(
                 health_response = requests.get(
                     f"{base_url}/containers/{container_id}/health",
                     headers=headers,
-                    timeout=10
+                    timeout=10,
                 )
                 health_response.raise_for_status()
                 health = health_response.json()
 
-                health_status = health['health_status']
+                health_status = health["health_status"]
                 print(f"  Status: {health_status}", end="\r")
 
                 if health_status == "HEALTHY":
                     print(f"\n\n✓ Container is now HEALTHY!")
-                    if health.get('health_data'):
-                        data = health['health_data']
+                    if health.get("health_data"):
+                        data = health["health_data"]
                         print(f"  Agents running: {data.get('agents_running', 0)}")
                         print(f"  Uptime: {data.get('uptime_seconds', 0)}s")
                         print(f"  Memory: {data.get('memory_mb', 0)}MB")
@@ -149,7 +147,7 @@ Examples:
 
   # Use local environment
   %(prog)s --user-id USER_123 --token YOUR_TOKEN --local
-        """
+        """,
     )
 
     parser.add_argument("--user-id", required=True, help="User ID (for authentication)")
@@ -157,10 +155,21 @@ Examples:
     parser.add_argument("--name", help="Optional container name")
     parser.add_argument("--config", help="Optional config as JSON string")
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
-    parser.add_argument("--local", action="store_true", help="Use local development URL (localhost:8000)")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Use local development URL (localhost:8000)",
+    )
     parser.add_argument("--url", help="Custom base URL (overrides --env and --local)")
-    parser.add_argument("--wait", action="store_true", help="Wait for container to become healthy")
-    parser.add_argument("--wait-timeout", type=int, default=300, help="Health check timeout in seconds (default: 300)")
+    parser.add_argument(
+        "--wait", action="store_true", help="Wait for container to become healthy"
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=300,
+        help="Health check timeout in seconds (default: 300)",
+    )
 
     args = parser.parse_args()
 
@@ -173,7 +182,7 @@ Examples:
         # Production URLs by environment
         urls = {
             "dev": "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com",
-            "prod": "https://api.openclaw.ai"  # placeholder
+            "prod": "https://api.openclaw.ai",  # placeholder
         }
         base_url = urls.get(args.env, urls["dev"])
 
@@ -194,16 +203,22 @@ Examples:
         name=args.name,
         config=config,
         wait=args.wait,
-        wait_timeout=args.wait_timeout
+        wait_timeout=args.wait_timeout,
     )
 
     print(f"\n==> Next steps:")
     print(f"  # View logs")
-    print(f"  python scripts/get_logs.py {container['container_id']} --user-id {args.user_id}")
+    print(
+        f"  python scripts/get_logs.py {container['container_id']} --user-id {args.user_id}"
+    )
     print(f"\n  # Get shell")
-    print(f"  python scripts/exec_shell.py {container['container_id']} --user-id {args.user_id}")
+    print(
+        f"  python scripts/exec_shell.py {container['container_id']} --user-id {args.user_id}"
+    )
     print(f"\n  # Delete container")
-    print(f"  python scripts/delete_containers.py {container['container_id']} --user-id {args.user_id}")
+    print(
+        f"  python scripts/delete_containers.py {container['container_id']} --user-id {args.user_id}"
+    )
 
 
 if __name__ == "__main__":

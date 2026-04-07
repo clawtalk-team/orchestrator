@@ -1,6 +1,8 @@
 """Unit tests for container models."""
-import pytest
 from datetime import datetime
+
+import pytest
+
 from app.models.container import Container, ContainerRequest, HealthData
 
 
@@ -18,7 +20,7 @@ def test_container_model():
         created_at=now,
         updated_at=now,
     )
-    
+
     assert container.container_id == "oc-test123"
     assert container.user_id == "user-456"
     assert container.status == "RUNNING"
@@ -35,9 +37,9 @@ def test_health_data_model():
         memory_mb=256,
         cpu_percent=12.5,
         version="0.1.0",
-        agents=[{"agent_id": "agent-1", "name": "Test Agent"}]
+        agents=[{"agent_id": "agent-1", "name": "Test Agent"}],
     )
-    
+
     assert health.agents_running == 2
     assert health.uptime_seconds == 360
     assert health.memory_mb == 256
@@ -47,10 +49,7 @@ def test_health_data_model():
 
 def test_container_request_model():
     """Test ContainerRequest model."""
-    request = ContainerRequest(
-        name="test-container",
-        config={"key": "value"}
-    )
-    
+    request = ContainerRequest(name="test-container", config={"key": "value"})
+
     assert request.name == "test-container"
     assert request.config == {"key": "value"}

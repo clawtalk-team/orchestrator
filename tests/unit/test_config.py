@@ -1,7 +1,9 @@
 """Unit tests for configuration."""
-import pytest
 import os
-from app.config import get_settings, Settings
+
+import pytest
+
+from app.config import Settings, get_settings
 
 
 def test_get_settings():
@@ -39,14 +41,14 @@ def test_settings_from_env(monkeypatch):
     monkeypatch.setenv("APP_NAME", "test-orchestrator")
     monkeypatch.setenv("DEBUG", "true")
     monkeypatch.setenv("CONTAINERS_TABLE", "test-containers")
-    
+
     # Clear cached settings
     get_settings.cache_clear()
-    
+
     settings = get_settings()
     assert settings.app_name == "test-orchestrator"
     assert settings.debug is True
     assert settings.containers_table == "test-containers"
-    
+
     # Reset cache
     get_settings.cache_clear()

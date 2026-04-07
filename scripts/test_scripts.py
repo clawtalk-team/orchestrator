@@ -17,12 +17,7 @@ def run_command(cmd: list[str], description: str) -> bool:
     print(f"{'='*60}")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
         print(result.stdout)
         if result.stderr:
@@ -51,43 +46,38 @@ def main():
         # Test 1: list_containers.py --help
         {
             "cmd": [python, str(scripts_dir / "list_containers.py"), "--help"],
-            "description": "list_containers.py --help"
+            "description": "list_containers.py --help",
         },
-
         # Test 2: list_ecs_tasks.py --help
         {
             "cmd": [python, str(scripts_dir / "list_ecs_tasks.py"), "--help"],
-            "description": "list_ecs_tasks.py --help"
+            "description": "list_ecs_tasks.py --help",
         },
-
         # Test 3: get_logs.py --help
         {
             "cmd": [python, str(scripts_dir / "get_logs.py"), "--help"],
-            "description": "get_logs.py --help"
+            "description": "get_logs.py --help",
         },
-
         # Test 4: exec_shell.py --help
         {
             "cmd": [python, str(scripts_dir / "exec_shell.py"), "--help"],
-            "description": "exec_shell.py --help"
+            "description": "exec_shell.py --help",
         },
-
         # Test 5: delete_containers.py --help
         {
             "cmd": [python, str(scripts_dir / "delete_containers.py"), "--help"],
-            "description": "delete_containers.py --help"
+            "description": "delete_containers.py --help",
         },
-
         # Test 6: launch_container.py --help
         {
             "cmd": [python, str(scripts_dir / "launch_container.py"), "--help"],
-            "description": "launch_container.py --help"
+            "description": "launch_container.py --help",
         },
     ]
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SCRIPT VALIDATION TEST SUITE")
-    print("="*60)
+    print("=" * 60)
 
     results = []
     for test in tests:
@@ -95,9 +85,9 @@ def main():
         results.append((test["description"], success))
 
     # Print summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     passed = sum(1 for _, success in results if success)
     total = len(results)

@@ -16,12 +16,12 @@ Environment variables required:
 - DYNAMODB_TABLE: DynamoDB table name (default: openclaw-containers)
 """
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 try:
     import boto3
@@ -61,7 +61,9 @@ class ConfigFetcher:
         self.dynamodb = boto3.resource("dynamodb", **kwargs)
         self.table = self.dynamodb.Table(table_name)
 
-    def get_user_config(self, user_id: str, config_name: str = "default") -> Dict[str, Any]:
+    def get_user_config(
+        self, user_id: str, config_name: str = "default"
+    ) -> Dict[str, Any]:
         """
         Fetch user configuration from DynamoDB.
 
@@ -85,7 +87,9 @@ class ConfigFetcher:
                 )
 
             if "Item" not in response:
-                print(f"WARNING: No user config found for user_id={user_id}, config_name={config_name}")
+                print(
+                    f"WARNING: No user config found for user_id={user_id}, config_name={config_name}"
+                )
                 return {}
 
             return dict(response["Item"])
@@ -211,9 +215,7 @@ class ConfigFetcher:
             },
             "models": {"providers": providers},
             "agents": {
-                "defaults": {
-                    "model": {"primary": f"{llm_provider}/{openclaw_model}"}
-                }
+                "defaults": {"model": {"primary": f"{llm_provider}/{openclaw_model}"}}
             },
         }
 
@@ -330,7 +332,9 @@ def main():
         print("ERROR: --user-id is required (or set USER_ID env var)")
         sys.exit(1)
 
-    print(f"=== Fetching config for user_id={args.user_id}, config_name={args.config_name} ===")
+    print(
+        f"=== Fetching config for user_id={args.user_id}, config_name={args.config_name} ==="
+    )
     if args.container_id:
         print(f"Container ID: {args.container_id}")
 

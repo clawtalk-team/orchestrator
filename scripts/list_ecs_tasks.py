@@ -7,6 +7,7 @@ Usage: python scripts/list_ecs_tasks.py [--env ENV]
 """
 
 import argparse
+
 import boto3
 from tabulate import tabulate
 
@@ -15,7 +16,7 @@ def list_ecs_tasks(
     env: str = "dev",
     profile: str = "personal",
     region: str = "ap-southeast-2",
-    cluster: str = "clawtalk-dev"
+    cluster: str = "clawtalk-dev",
 ):
     """List all ECS tasks in the cluster."""
     session = boto3.Session(profile_name=profile, region_name=region)
@@ -40,11 +41,9 @@ def list_ecs_tasks(
     # Describe tasks in batches (max 100 per call)
     tasks = []
     for i in range(0, len(task_arns), 100):
-        chunk = task_arns[i:i + 100]
+        chunk = task_arns[i : i + 100]
         tasks_response = ecs.describe_tasks(
-            cluster=cluster,
-            tasks=chunk,
-            include=["TAGS"]
+            cluster=cluster, tasks=chunk, include=["TAGS"]
         )
         tasks.extend(tasks_response.get("tasks", []))
 
@@ -70,17 +69,27 @@ def list_ecs_tasks(
                         ip_address = detail["value"]
                         break
 
-        table_data.append([
-            task_id,
-            status,
-            desired_status,
-            container_id,
-            user_id,
-            ip_address,
-            started_at
-        ])
+        table_data.append(
+            [
+                task_id,
+                status,
+                desired_status,
+                container_id,
+                user_id,
+                ip_address,
+                started_at,
+            ]
+        )
 
-    headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "IP Address", "Started At"]
+    headers = [
+        "Task ID",
+        "Status",
+        "Desired",
+        "Container ID",
+        "User ID",
+        "IP Address",
+        "Started At",
+    ]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     # Count by status
@@ -101,10 +110,7 @@ def main():
     args = parser.parse_args()
 
     list_ecs_tasks(
-        env=args.env,
-        profile=args.profile,
-        region=args.region,
-        cluster=args.cluster
+        env=args.env, profile=args.profile, region=args.region, cluster=args.cluster
     )
 
 

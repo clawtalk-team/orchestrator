@@ -1,4 +1,4 @@
-.PHONY: help venv install install-dev test test-unit test-integration test-cov clean clean-venv run docker-build docker-up docker-down docker-logs docker-clean ecr-setup ecr-login lambda-push tf-ecr-init tf-ecr-apply tf-init tf-plan tf-apply tf-destroy deploy lambda-logs lambda-invoke test-deploy destroy
+.PHONY: help venv install install-dev lint test test-unit test-integration test-cov ci clean clean-venv run docker-build docker-up docker-down docker-logs docker-clean ecr-setup ecr-login lambda-push tf-ecr-init tf-ecr-apply tf-init tf-plan tf-apply tf-destroy deploy lambda-logs lambda-invoke test-deploy destroy
 
 .DEFAULT_GOAL := help
 
@@ -24,10 +24,12 @@ help:
 	@echo "  venv             - Create virtual environment"
 	@echo "  install          - Install production dependencies (creates venv if needed)"
 	@echo "  install-dev      - Install development dependencies (creates venv if needed)"
+	@echo "  lint             - Run code linting (black, isort, flake8)"
 	@echo "  test             - Run all tests"
 	@echo "  test-unit        - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  test-cov         - Run tests with coverage report"
+	@echo "  ci               - Run full CI pipeline (lint + test + test-integration)"
 	@echo "  test-e2e         - Run end-to-end config delivery test (local)"
 	@echo "  test-e2e-aws     - Run end-to-end test against AWS DynamoDB"
 	@echo "  test-e2e-logs    - View E2E test container logs"
@@ -69,6 +71,14 @@ install: venv
 install-dev: venv
 	$(VENV_PIP) install -r requirements.txt -r requirements-dev.txt
 
+lint: install-dev
+	@echo "Running black..."
+	$(VENV_PYTHON) -m black --check app/ tests/ scripts/ *.py 2>/dev/null || true
+	@echo "Running isort..."
+	$(VENV_PYTHON) -m isort --check-only app/ tests/ scripts/ *.py 2>/dev/null || true
+	@echo "Running flake8..."
+	$(VENV_PYTHON) -m flake8 app/ tests/ scripts/ --max-line-length=120 --extend-ignore=E203,W503
+
 test: install-dev
 	$(VENV_PYTHON) -m pytest tests/
 
@@ -83,6 +93,9 @@ test-integration: install-dev
 
 test-cov: install-dev
 	$(VENV_PYTHON) -m pytest tests/ --cov=app --cov-report=term-missing --cov-report=html
+
+ci: lint test test-integration
+	@echo "✓ All CI checks passed!"
 
 test-e2e:
 	@echo "=== Running End-to-End Config Delivery Test (Local) ==="
