@@ -90,7 +90,7 @@ python scripts/list_ecs_tasks.py --env prod
 - `--env` - Environment (dev/prod), default: dev
 - `--profile` - AWS profile name, default: personal
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: openclaw
+- `--cluster` - ECS cluster name, default: clawtalk-dev
 
 ### 4. Get Logs
 
@@ -141,7 +141,7 @@ python scripts/exec_shell.py oc-abc12345 --user-id USER_123 --command "ls -la"
 - `--command` - Command to execute, default: /bin/bash
 - `--profile` - AWS profile name, default: personal
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: openclaw
+- `--cluster` - ECS cluster name, default: clawtalk-dev
 - `--container` - Container name, default: openclaw-agent
 
 **Prerequisites:**
@@ -181,7 +181,7 @@ python scripts/delete_containers.py oc-abc12345 --user-id USER_123 --yes
 - `--yes` / `-y` - Skip confirmation prompt
 - `--profile` - AWS profile name, default: personal
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: openclaw
+- `--cluster` - ECS cluster name, default: clawtalk-dev
 
 ## Common Workflows
 

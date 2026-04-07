@@ -15,7 +15,7 @@ def list_ecs_tasks(
     env: str = "dev",
     profile: str = "personal",
     region: str = "ap-southeast-2",
-    cluster: str = "openclaw"
+    cluster: str = "clawtalk-dev"
 ):
     """List all ECS tasks in the cluster."""
     session = boto3.Session(profile_name=profile, region_name=region)
@@ -88,7 +88,7 @@ def main():
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
-    parser.add_argument("--cluster", default="openclaw", help="ECS cluster name")
+    parser.add_argument("--cluster", default="clawtalk-dev", help="ECS cluster name")
 
     args = parser.parse_args()
 

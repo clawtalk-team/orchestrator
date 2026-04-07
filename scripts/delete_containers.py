@@ -135,7 +135,7 @@ def main():
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
-    parser.add_argument("--cluster", default="openclaw", help="ECS cluster name")
+    parser.add_argument("--cluster", default="clawtalk-dev", help="ECS cluster name")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without deleting")
     parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 

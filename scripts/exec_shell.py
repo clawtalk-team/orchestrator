@@ -97,7 +97,7 @@ def main():
     parser.add_argument("--env", default="dev", help="Environment (dev/prod)")
     parser.add_argument("--profile", default="personal", help="AWS profile name")
     parser.add_argument("--region", default="ap-southeast-2", help="AWS region")
-    parser.add_argument("--cluster", default="openclaw", help="ECS cluster name")
+    parser.add_argument("--cluster", default="clawtalk-dev", help="ECS cluster name")
     parser.add_argument("--container", default="openclaw-agent", help="Container name")
     parser.add_argument("--command", default="/bin/bash", help="Command to execute (default: /bin/bash)")
 
