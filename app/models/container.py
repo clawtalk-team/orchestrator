@@ -70,6 +70,18 @@ class Container(BaseModel):
         description="Timestamp when container was last updated"
     )
 
+    def to_response(self) -> "ContainerResponse":
+        """Convert Container model to ContainerResponse for API responses."""
+        return ContainerResponse(
+            container_id=self.container_id,
+            task_arn=self.task_arn or None,
+            status=self.status,
+            ip_address=self.ip_address,
+            health_status=self.health_status,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
+
 
 class ContainerRequest(BaseModel):
     """Request to create a new container."""
@@ -95,6 +107,7 @@ class ContainerResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "container_id": "cnt-abc123def456",
+                "task_arn": "arn:aws:ecs:ap-southeast-2:826182175287:task/clawtalk-dev/abc123",
                 "status": "RUNNING",
                 "ip_address": "10.0.1.42",
                 "health_status": "HEALTHY",
@@ -105,6 +118,9 @@ class ContainerResponse(BaseModel):
     )
 
     container_id: str = Field(description="Unique identifier for the container")
+    task_arn: Optional[str] = Field(
+        default=None, description="AWS ECS task ARN (available after task creation)"
+    )
     status: str = Field(
         description="Current container status: PENDING, RUNNING, STOPPED, FAILED"
     )
