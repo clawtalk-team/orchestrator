@@ -34,6 +34,7 @@ help:
 	@echo "  test-e2e-aws     - Run end-to-end test against AWS DynamoDB"
 	@echo "  test-e2e-logs    - View E2E test container logs"
 	@echo "  test-e2e-clean   - Stop and clean E2E test containers"
+	@echo "  test-docker-health - Test Docker image returns correct git SHA in /health"
 	@echo "  run              - Run the application locally"
 	@echo "  docker-build     - Build Docker image (ARM64)"
 	@echo "  docker-up        - Start services with docker compose"
@@ -100,6 +101,10 @@ ci: lint test test-integration
 test-e2e:
 	@echo "=== Running End-to-End Config Delivery Test (Local) ==="
 	./test/test_e2e.sh
+
+test-docker-health:
+	@echo "=== Testing Docker Health Endpoint with Git SHA ==="
+	./test_docker_health.sh
 
 test-e2e-aws:
 	@echo "=== Running End-to-End Test Against AWS DynamoDB ==="

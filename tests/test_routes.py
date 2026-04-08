@@ -32,7 +32,12 @@ def test_health_endpoint(client):
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["service"] == "orchestrator"
+    assert "git_sha" in data
+    # git_sha can be None or a string depending on git availability
+    assert data["git_sha"] is None or isinstance(data["git_sha"], str)
 
 
 def test_root_endpoint(client):
