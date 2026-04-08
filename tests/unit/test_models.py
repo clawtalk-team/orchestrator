@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from app.models.container import Container, ContainerRequest, HealthData
+from app.models.container import Container, ContainerRequest, ContainerResponse, HealthData
 
 
 def test_container_model():
@@ -53,3 +53,41 @@ def test_container_request_model():
 
     assert request.name == "test-container"
     assert request.config_name == "default"
+
+
+def test_container_response_model():
+    """Test ContainerResponse model includes task_arn."""
+    now = datetime.utcnow()
+    response = ContainerResponse(
+        container_id="oc-test123",
+        task_arn="arn:aws:ecs:region:account:task/cluster/task-id",
+        status="RUNNING",
+        ip_address="10.0.1.45",
+        health_status="HEALTHY",
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert response.container_id == "oc-test123"
+    assert response.task_arn == "arn:aws:ecs:region:account:task/cluster/task-id"
+    assert response.status == "RUNNING"
+    assert response.health_status == "HEALTHY"
+    assert response.ip_address == "10.0.1.45"
+
+
+def test_container_response_model_with_none_task_arn():
+    """Test ContainerResponse model with None task_arn."""
+    now = datetime.utcnow()
+    response = ContainerResponse(
+        container_id="oc-test123",
+        task_arn=None,
+        status="PENDING",
+        health_status="UNKNOWN",
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert response.container_id == "oc-test123"
+    assert response.task_arn is None
+    assert response.status == "PENDING"
+    assert response.health_status == "UNKNOWN"

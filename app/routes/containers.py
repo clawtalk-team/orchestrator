@@ -38,6 +38,7 @@ async def create_container(request: Request, req: ContainerRequest):
     )
     return ContainerResponse(
         container_id=container.container_id,
+        task_arn=container.task_arn if container.task_arn else None,
         status=container.status,
         ip_address=container.ip_address,
         health_status=container.health_status,
@@ -71,6 +72,7 @@ async def list_containers(
     return [
         ContainerResponse(
             container_id=c.container_id,
+            task_arn=c.task_arn if c.task_arn else None,
             status=c.status,
             ip_address=c.ip_address,
             health_status=c.health_status,
@@ -105,6 +107,7 @@ async def get_container(request: Request, container_id: str):
 
     return ContainerResponse(
         container_id=container.container_id,
+        task_arn=container.task_arn if container.task_arn else None,
         status=container.status,
         ip_address=container.ip_address,
         health_status=container.health_status,

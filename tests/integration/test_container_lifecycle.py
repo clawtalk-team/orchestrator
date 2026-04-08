@@ -57,7 +57,10 @@ def test_create_container(client, auth_headers):
     assert response.status_code == 200
     data = response.json()
     assert "container_id" in data
+    assert "task_arn" in data
     assert data["status"] in ["PENDING", "RUNNING"]
+    # task_arn may be empty string or None initially, or a valid ARN if ECS call completed
+    assert data["task_arn"] is None or isinstance(data["task_arn"], str)
 
     # Verify container is in DynamoDB
     container = dynamodb.get_container("test-user-123", data["container_id"])
@@ -100,6 +103,9 @@ def test_get_container(client, auth_headers):
 
     data = response.json()
     assert data["container_id"] == container_id
+    assert "task_arn" in data
+    # task_arn should be present (even if None/empty)
+    assert data["task_arn"] is None or isinstance(data["task_arn"], str)
 
 
 def test_get_container_not_found(client, auth_headers):

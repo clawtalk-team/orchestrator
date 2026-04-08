@@ -95,6 +95,7 @@ class ContainerResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "container_id": "cnt-abc123def456",
+                "task_arn": "arn:aws:ecs:ap-southeast-2:826182175287:task/clawtalk-dev/abc123",
                 "status": "RUNNING",
                 "ip_address": "10.0.1.42",
                 "health_status": "HEALTHY",
@@ -105,6 +106,9 @@ class ContainerResponse(BaseModel):
     )
 
     container_id: str = Field(description="Unique identifier for the container")
+    task_arn: Optional[str] = Field(
+        default=None, description="AWS ECS task ARN (available after task creation)"
+    )
     status: str = Field(
         description="Current container status: PENDING, RUNNING, STOPPED, FAILED"
     )
