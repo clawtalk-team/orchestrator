@@ -36,15 +36,7 @@ async def create_container(request: Request, req: ContainerRequest):
         api_key=api_key,
         config_name=req.config_name or "default",
     )
-    return ContainerResponse(
-        container_id=container.container_id,
-        task_arn=container.task_arn if container.task_arn else None,
-        status=container.status,
-        ip_address=container.ip_address,
-        health_status=container.health_status,
-        created_at=container.created_at,
-        updated_at=container.updated_at,
-    )
+    return container.to_response()
 
 
 @router.get(
@@ -69,18 +61,7 @@ async def list_containers(
     user_id = request.state.user_id
 
     containers = dynamodb.get_user_containers(user_id=user_id, status=status)
-    return [
-        ContainerResponse(
-            container_id=c.container_id,
-            task_arn=c.task_arn if c.task_arn else None,
-            status=c.status,
-            ip_address=c.ip_address,
-            health_status=c.health_status,
-            created_at=c.created_at,
-            updated_at=c.updated_at,
-        )
-        for c in containers
-    ]
+    return [c.to_response() for c in containers]
 
 
 @router.get(
@@ -105,15 +86,7 @@ async def get_container(request: Request, container_id: str):
     if not container:
         raise HTTPException(status_code=404, detail="Container not found")
 
-    return ContainerResponse(
-        container_id=container.container_id,
-        task_arn=container.task_arn if container.task_arn else None,
-        status=container.status,
-        ip_address=container.ip_address,
-        health_status=container.health_status,
-        created_at=container.created_at,
-        updated_at=container.updated_at,
-    )
+    return container.to_response()
 
 
 @router.delete(

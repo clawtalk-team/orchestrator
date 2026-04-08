@@ -1,5 +1,5 @@
 """Unit tests for container models."""
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -57,7 +57,7 @@ def test_container_request_model():
 
 def test_container_response_model():
     """Test ContainerResponse model includes task_arn."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     response = ContainerResponse(
         container_id="oc-test123",
         task_arn="arn:aws:ecs:region:account:task/cluster/task-id",
@@ -77,7 +77,7 @@ def test_container_response_model():
 
 def test_container_response_model_with_none_task_arn():
     """Test ContainerResponse model with None task_arn."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     response = ContainerResponse(
         container_id="oc-test123",
         task_arn=None,

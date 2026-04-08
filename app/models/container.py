@@ -70,6 +70,18 @@ class Container(BaseModel):
         description="Timestamp when container was last updated"
     )
 
+    def to_response(self) -> "ContainerResponse":
+        """Convert Container model to ContainerResponse for API responses."""
+        return ContainerResponse(
+            container_id=self.container_id,
+            task_arn=self.task_arn or None,
+            status=self.status,
+            ip_address=self.ip_address,
+            health_status=self.health_status,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
+
 
 class ContainerRequest(BaseModel):
     """Request to create a new container."""
