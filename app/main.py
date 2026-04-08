@@ -117,7 +117,7 @@ def custom_openapi():
         routes=app.routes,
     )
     # Add Bearer token security scheme
-    openapi_schema["components"]["securitySchemes"] = {
+    openapi_schema.setdefault("components", {})["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
             "scheme": "bearer",
@@ -126,9 +126,10 @@ def custom_openapi():
         }
     }
     # Apply security globally to all endpoints except public ones
+    valid_methods = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
     for path in openapi_schema["paths"]:
         for method in openapi_schema["paths"][path]:
-            if method != "parameters":
+            if method in valid_methods:
                 # Don't apply security to /health endpoint
                 if path == "/health":
                     continue
