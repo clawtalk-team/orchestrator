@@ -2,11 +2,17 @@
 """
 End-to-end test script for user creation and container provisioning.
 
-This script:
+This script tests the complete flow:
 1. Creates a user in auth-gateway (AWS Lambda)
-2. Uses the API key to create a container via orchestrator (local/AWS)
-3. Monitors container status until RUNNING
-4. Shows all configs that get transferred to the container
+2. Creates user configuration via Config API (orchestrator)
+3. Uses the API key to create a container via orchestrator
+4. Monitors container status until RUNNING
+5. Shows how configs are merged (system + user) and transferred to containers
+
+Configuration System:
+- System config: Infrastructure URLs and shared tokens (admin-managed)
+- User config: Personal API keys and LLM preferences (user-managed)
+- Merge behavior: User values override system defaults, missing fields fall back
 
 AWS Configuration (All Services):
 - AUTH_GATEWAY_URL: AWS Lambda (https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com)
@@ -20,6 +26,9 @@ Run with:
     # or
     export AWS_ACCESS_KEY_ID=...
     export AWS_SECRET_ACCESS_KEY=...
+
+    # Set Anthropic API key for user config
+    export ANTHROPIC_API_KEY=sk-ant-...
 
     python scripts/test_end_to_end_flow.py
 
@@ -195,73 +204,45 @@ def make_request(
         raise
 
 
-def query_dynamodb_config(user_id: str, config_name: str = "default") -> Optional[Dict]:
-    """Query DynamoDB directly to see what config is stored."""
-    print_step("X", f"Querying DynamoDB for user config")
-    print_info(f"Looking for: pk=USER#{user_id}, sk=CONFIG#{config_name}")
+def verify_config_via_api(api_key: str, config_name: str = "default") -> Optional[Dict]:
+    """Verify configuration via Config API."""
+    print_info(f"Retrieving config '{config_name}' via Config API...")
 
     try:
-        import boto3
-
-        # Build boto3 session config
-        session_kwargs = {"region_name": DYNAMODB_REGION}
-
-        # Use AWS profile if set and no explicit credentials
-        if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
-            print_info(f"Using AWS profile: {AWS_PROFILE}")
-            session_kwargs["profile_name"] = AWS_PROFILE
-
-        session = boto3.Session(**session_kwargs)
-
-        # Build DynamoDB resource config
-        dynamodb_kwargs = {}
-        if DYNAMODB_ENDPOINT:
-            print_info(f"Using DynamoDB endpoint: {DYNAMODB_ENDPOINT}")
-            dynamodb_kwargs["endpoint_url"] = DYNAMODB_ENDPOINT
-        else:
-            print_info(f"Using AWS DynamoDB in region: {DYNAMODB_REGION}")
-
-        dynamodb = session.resource("dynamodb", **dynamodb_kwargs)
-        table = dynamodb.Table(DYNAMODB_TABLE)
-
         # Get user config
-        print_info("Fetching USER config from DynamoDB...")
-        user_response = table.get_item(
-            Key={"pk": f"USER#{user_id}", "sk": f"CONFIG#{config_name}"}
+        print_info("Fetching USER config via API...")
+        user_response = make_request(
+            method="GET",
+            url=f"{ORCHESTRATOR_URL}/config/{config_name}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            description=f"Retrieve user config '{config_name}'",
         )
 
-        # Get system config
-        print_info("Fetching SYSTEM config from DynamoDB...")
-        system_response = table.get_item(Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"})
-
-        config = {
-            "user_config": user_response.get("Item"),
-            "system_config": system_response.get("Item"),
-        }
-
-        if user_response.get("Item"):
-            print_success(f"Found user config in DynamoDB")
-            # Mask sensitive fields
-            masked_config = dict(user_response["Item"])
+        user_config = None
+        if user_response.status_code == 200:
+            user_config = user_response.json()
+            print_success(f"Found user config via API")
+            # Mask sensitive fields for display
+            masked_config = dict(user_config)
             for key in ["anthropic_api_key", "openai_api_key", "auth_gateway_api_key"]:
                 if key in masked_config and masked_config[key]:
                     masked_config[
                         key
                     ] = f"{masked_config[key][:10]}...{masked_config[key][-4:]}"
             print_json("User Config (masked)", masked_config)
+        elif user_response.status_code == 404:
+            print_warning("No user config found")
         else:
-            print_warning("No user config found in DynamoDB")
+            print_warning(f"Failed to retrieve user config: {user_response.status_code}")
 
-        if system_response.get("Item"):
-            print_success(f"Found system config in DynamoDB")
-            print_json("System Config", system_response["Item"])
-        else:
-            print_warning("No system config found in DynamoDB")
+        # Note: System config is admin-only, so we can't fetch it with user API key
+        # This is intentional - users shouldn't see system infrastructure details
+        print_info("System config is admin-only (contains infrastructure URLs/tokens)")
 
-        return config
+        return {"user_config": user_config, "system_config": None}
 
     except Exception as e:
-        print_warning(f"Could not query DynamoDB directly: {e}")
+        print_warning(f"Could not query config via API: {e}")
         return None
 
 
@@ -343,59 +324,47 @@ def main():
             sys.exit(1)
 
         # ====================================================================
-        # Step 3: Create User Config in DynamoDB
+        # Step 3: Create User Config via Config API
         # ====================================================================
-        print_step(3, "Create user configuration in DynamoDB")
+        print_step(3, "Create user configuration via Config API")
         print_info("Creating user config with API keys...")
 
-        try:
-            import boto3
+        # Get Anthropic API key from environment
+        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not anthropic_api_key:
+            print_error("ANTHROPIC_API_KEY not set in environment")
+            sys.exit(1)
 
-            # Get Anthropic API key from environment
-            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not anthropic_api_key:
-                print_error("ANTHROPIC_API_KEY not set in environment")
-                sys.exit(1)
-
-            # Build boto3 session config
-            session_kwargs = {"region_name": DYNAMODB_REGION}
-            if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
-                session_kwargs["profile_name"] = AWS_PROFILE
-
-            session = boto3.Session(**session_kwargs)
-
-            # Build DynamoDB resource config
-            dynamodb_kwargs = {}
-            if DYNAMODB_ENDPOINT:
-                dynamodb_kwargs["endpoint_url"] = DYNAMODB_ENDPOINT
-
-            dynamodb = session.resource("dynamodb", **dynamodb_kwargs)
-            table = dynamodb.Table(DYNAMODB_TABLE)
-
-            # Create user config
-            user_config = {
-                "pk": f"USER#{user_id}",
-                "sk": "CONFIG#default",
-                "config_type": "user_config",
-                "user_id": user_id,
+        response = make_request(
+            method="POST",
+            url=f"{ORCHESTRATOR_URL}/config",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json_data={
+                "config_name": "default",
                 "llm_provider": "anthropic",
                 "openclaw_model": "claude-3-5-sonnet-20241022",
                 "anthropic_api_key": anthropic_api_key,
                 "auth_gateway_api_key": api_key,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
+            },
+            description="Create user config with API keys",
+        )
 
-            table.put_item(Item=user_config)
-            print_success("User config created in DynamoDB")
-            print_info(f"  LLM Provider: anthropic")
-            print_info(f"  Model: claude-3-5-sonnet-20241022")
-            print_info(f"  Anthropic API Key: {anthropic_api_key[:20]}...")
-            print_info(f"  Auth Gateway API Key: {api_key[:20]}...")
-
-        except Exception as e:
-            print_error(f"Failed to create user config: {e}")
+        if response.status_code not in (200, 201):
+            print_error(f"Failed to create user config: {response.status_code}")
+            if response.text:
+                print_error(f"Error: {response.text}")
             sys.exit(1)
+
+        config_response = response.json()
+        print_success("User config created via Config API")
+        print_info(f"  Config Name: {config_response.get('config_name', 'default')}")
+        print_info(f"  LLM Provider: anthropic")
+        print_info(f"  Model: claude-3-5-sonnet-20241022")
+        print_info(f"  Anthropic API Key: {anthropic_api_key[:20]}...")
+        print_info(f"  Auth Gateway API Key: {api_key[:20]}...")
 
         # ====================================================================
         # Step 4: Create Container via Orchestrator
@@ -430,19 +399,19 @@ def main():
         print_info(f"Initial Status: {container_data['status']}")
 
         # ====================================================================
-        # Step 5: Verify DynamoDB Config
+        # Step 5: Verify Config via API
         # ====================================================================
-        print_step(5, "Verify configuration stored in DynamoDB")
-        config = query_dynamodb_config(user_id, "default")
+        print_step(5, "Verify configuration via Config API")
+        config = verify_config_via_api(api_key, "default")
 
         # ====================================================================
-        # Step 6: Show Environment Variables that will be passed to container
+        # Step 6: Show Container Startup Flow
         # ====================================================================
-        print_step(6, "Show environment variables for container")
+        print_step(6, "Show container startup configuration flow")
         print_info("These are the env vars that ECS will pass to the container:")
 
         container_env = {
-            "API_KEY": f"{api_key}",  
+            "API_KEY": f"{api_key}",
             "CONTAINER_ID": container_id,
             "CONFIG_NAME": "default",
             "ORCHESTRATOR_URL": ORCHESTRATOR_URL,
@@ -450,6 +419,16 @@ def main():
         }
 
         print_json("Container Environment Variables", container_env)
+
+        print_info("\nContainer startup flow:")
+        print("  1. Container starts with API_KEY and ORCHESTRATOR_URL")
+        print(f"  2. Container calls: GET {ORCHESTRATOR_URL}/config/default")
+        print("  3. Orchestrator merges system + user configs")
+        print("  4. Container receives complete config with:")
+        print("     - Infrastructure URLs (from system config)")
+        print("     - User API keys (from user config)")
+        print("     - LLM preferences (from user config)")
+        print("  5. Container writes config files and starts services")
 
         # ====================================================================
         # Step 7: Monitor Container Status
@@ -636,9 +615,24 @@ def main():
         print_header("Test Summary")
         print_success(f"User created: {test_email} (UUID: {user_id})")
         print_success(f"API key generated: {api_key[:20]}...{api_key[-10:]}")
-        print_success(f"User config created in DynamoDB with API keys")
+        print_success(f"User config created via Config API")
         print_success(f"Container requested: {container_id}")
         print_info(f"Container status: {container_data['status']}")
+
+        print("\n" + BOLD + "Configuration System Overview:" + RESET)
+        print("Two-tier config system:")
+        print("  • System Config (admin-managed):")
+        print("    - Infrastructure URLs (auth_gateway_url, openclaw_url, voice_gateway_url)")
+        print("    - Shared tokens (openclaw_token)")
+        print("  • User Config (user-managed):")
+        print("    - Personal API keys (anthropic_api_key, openai_api_key)")
+        print("    - LLM preferences (llm_provider, openclaw_model)")
+        print("    - Auth credentials (auth_gateway_api_key)")
+        print("\nMerge behavior:")
+        print("  1. System config provides infrastructure defaults")
+        print("  2. User config provides personal settings")
+        print("  3. User values override system values for same fields")
+        print("  4. Missing user fields fall back to system defaults")
 
         print("\n" + BOLD + "What happens next (in AWS ECS):" + RESET)
         print("1. ECS Fargate task launches in AWS (clawtalk-dev cluster)")
@@ -647,13 +641,13 @@ def main():
         print(f"   - CONTAINER_ID={container_id}")
         print("   - CONFIG_NAME=default")
         print(f"   - ORCHESTRATOR_URL={ORCHESTRATOR_URL}")
-        print("3. Container calls orchestrator config API:")
+        print("3. Container calls orchestrator Config API:")
         print(f"   - GET {ORCHESTRATOR_URL}/config/default")
         print("   - Authorization: Bearer <API_KEY>")
-        print("4. Orchestrator returns user configuration with:")
-        print("   - llm_provider, anthropic_api_key")
-        print("   - auth_gateway_url, auth_gateway_api_key")
-        print("   - openclaw_url, openclaw_model, etc.")
+        print("4. Orchestrator returns merged configuration:")
+        print("   - System config: auth_gateway_url, openclaw_url, openclaw_token")
+        print("   - User config: llm_provider, anthropic_api_key, openclaw_model")
+        print("   - Result: Complete config with user preferences + infrastructure URLs")
         print("5. Container validates config and writes files:")
         print("   - ~/.openclaw/openclaw.json (OpenClaw gateway config)")
         print("   - ~/.clawtalk/clawtalk.json (openclaw-agent config)")
