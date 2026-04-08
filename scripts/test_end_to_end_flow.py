@@ -58,7 +58,7 @@ ORCHESTRATOR_URL = os.getenv(
 
 # DynamoDB Configuration (AWS - no endpoint for real DynamoDB)
 DYNAMODB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT")  # None = use AWS
-DYNAMODB_TABLE = os.getenv("CONTAINERS_TABLE", "openclaw-containers-dev")
+DYNAMODB_TABLE = os.getenv("CONTAINERS_TABLE", "openclaw-containers")
 DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "ap-southeast-2")
 
 # AWS Credentials (use profile or explicit keys)
@@ -341,64 +341,9 @@ def main():
             sys.exit(1)
 
         # ====================================================================
-        # Step 3: Create User Config in DynamoDB
+        # Step 3: Create Container via Orchestrator
         # ====================================================================
-        print_step(3, "Create user configuration in DynamoDB")
-        print_info("Creating user config with API keys...")
-
-        try:
-            import boto3
-
-            # Get Anthropic API key from environment
-            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not anthropic_api_key:
-                print_error("ANTHROPIC_API_KEY not set in environment")
-                sys.exit(1)
-
-            # Build boto3 session config
-            session_kwargs = {"region_name": DYNAMODB_REGION}
-            if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
-                session_kwargs["profile_name"] = AWS_PROFILE
-
-            session = boto3.Session(**session_kwargs)
-
-            # Build DynamoDB resource config
-            dynamodb_kwargs = {}
-            if DYNAMODB_ENDPOINT:
-                dynamodb_kwargs["endpoint_url"] = DYNAMODB_ENDPOINT
-
-            dynamodb = session.resource("dynamodb", **dynamodb_kwargs)
-            table = dynamodb.Table(DYNAMODB_TABLE)
-
-            # Create user config
-            user_config = {
-                "pk": f"USER#{user_id}",
-                "sk": "CONFIG#default",
-                "config_type": "user_config",
-                "user_id": user_id,
-                "llm_provider": "anthropic",
-                "openclaw_model": "claude-3-5-sonnet-20241022",
-                "anthropic_api_key": anthropic_api_key,
-                "auth_gateway_api_key": api_key,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-
-            table.put_item(Item=user_config)
-            print_success("User config created in DynamoDB")
-            print_info(f"  LLM Provider: anthropic")
-            print_info(f"  Model: claude-3-5-sonnet-20241022")
-            print_info(f"  Anthropic API Key: {anthropic_api_key[:20]}...")
-            print_info(f"  Auth Gateway API Key: {api_key[:20]}...")
-
-        except Exception as e:
-            print_error(f"Failed to create user config: {e}")
-            sys.exit(1)
-
-        # ====================================================================
-        # Step 4: Create Container via Orchestrator
-        # ====================================================================
-        print_step(4, "Create container via orchestrator")
+        print_step(3, "Create container via orchestrator")
         print_info("This will trigger ECS task creation...")
 
         response = make_request(
@@ -428,15 +373,15 @@ def main():
         print_info(f"Initial Status: {container_data['status']}")
 
         # ====================================================================
-        # Step 5: Verify DynamoDB Config
+        # Step 4: Show DynamoDB Config
         # ====================================================================
-        print_step(5, "Verify configuration stored in DynamoDB")
+        print_step(4, "Show configuration stored in DynamoDB")
         config = query_dynamodb_config(user_id, "default")
 
         # ====================================================================
-        # Step 6: Show Environment Variables that will be passed to container
+        # Step 5: Show Environment Variables that will be passed to container
         # ====================================================================
-        print_step(6, "Show environment variables for container")
+        print_step(5, "Show environment variables for container")
         print_info("These are the env vars that ECS will pass to the container:")
 
         container_env = {
@@ -454,9 +399,9 @@ def main():
         print_json("Container Environment Variables", container_env)
 
         # ====================================================================
-        # Step 7: Monitor Container Status
+        # Step 6: Monitor Container Status
         # ====================================================================
-        print_step(7, "Monitor container status")
+        print_step(6, "Monitor container status")
         print_info("Polling for container status changes...")
 
         max_attempts = 60
@@ -508,152 +453,26 @@ def main():
             print_info("This is expected for ECS deployments that take time to spin up")
 
         # ====================================================================
-        # Step 8: Fetch and Display Container Logs
-        # ====================================================================
-        print_step(8, "Fetch container logs (90 seconds)")
-        print_info("Monitoring container startup logs...")
-
-        try:
-            import boto3
-
-            # Build boto3 session config
-            session_kwargs = {"region_name": DYNAMODB_REGION}
-            if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
-                session_kwargs["profile_name"] = AWS_PROFILE
-
-            session = boto3.Session(**session_kwargs)
-            logs_client = session.client("logs")
-            ecs_client = session.client("ecs")
-
-            # Get ECS task ARN for this container
-            print_info(f"Looking up ECS task for container {container_id}...")
-
-            # List tasks and find the one for this container
-            tasks_response = ecs_client.list_tasks(
-                cluster="clawtalk-dev",
-                desiredStatus="RUNNING"
-            )
-
-            task_arn = None
-            if tasks_response["taskArns"]:
-                # Get task details to find our container
-                tasks = ecs_client.describe_tasks(
-                    cluster="clawtalk-dev",
-                    tasks=tasks_response["taskArns"]
-                )
-
-                # Find task that was started around the same time as our container
-                # (within 60 seconds of container creation)
-                from dateutil import parser as date_parser
-                container_created = date_parser.parse(container_data["created_at"])
-
-                for task in tasks["tasks"]:
-                    task_started = task["startedAt"]
-                    # Check if task started within 60 seconds of container creation
-                    time_diff = abs((task_started - container_created).total_seconds())
-                    if time_diff < 60:
-                        task_arn = task["taskArn"]
-                        task_id = task_arn.split("/")[-1]
-                        print_success(f"Found ECS task: {task_id}")
-                        break
-
-            if not task_arn:
-                print_warning("Could not find ECS task for this container")
-                print_info("Skipping log fetch")
-            else:
-                # Get log stream name
-                log_group = "/ecs/openclaw-agent-dev"
-                log_stream_prefix = f"ecs/openclaw-agent/{task_id}"
-
-                print_info(f"Fetching logs from {log_group}/{log_stream_prefix}")
-
-                # Wait and collect logs for 90 seconds
-                print_info("Collecting logs for 90 seconds...")
-                start_time = time.time()
-                log_duration = 90
-                last_timestamp = None
-                all_messages = []
-
-                while time.time() - start_time < log_duration:
-                    try:
-                        # List log streams matching our task
-                        streams_response = logs_client.describe_log_streams(
-                            logGroupName=log_group,
-                            logStreamNamePrefix=log_stream_prefix,
-                            limit=1
-                        )
-
-                        if not streams_response["logStreams"]:
-                            print_info("No log streams found yet, waiting...")
-                            time.sleep(5)
-                            continue
-
-                        log_stream_name = streams_response["logStreams"][0]["logStreamName"]
-
-                        # Fetch log events
-                        get_logs_kwargs = {
-                            "logGroupName": log_group,
-                            "logStreamName": log_stream_name,
-                            "startFromHead": True,
-                            "limit": 100
-                        }
-
-                        if last_timestamp:
-                            get_logs_kwargs["startTime"] = last_timestamp + 1
-
-                        events_response = logs_client.get_log_events(**get_logs_kwargs)
-
-                        events = events_response["events"]
-                        if events:
-                            for event in events:
-                                message = event["message"]
-                                if message not in all_messages:
-                                    all_messages.append(message)
-                                    print(f"    {message}")
-                                last_timestamp = event["timestamp"]
-
-                        time.sleep(3)  # Poll every 3 seconds
-
-                    except Exception as e:
-                        print_warning(f"Error fetching logs: {e}")
-                        time.sleep(5)
-
-                elapsed = time.time() - start_time
-                print_success(f"Log collection complete ({elapsed:.0f}s)")
-                print_info(f"Total log lines collected: {len(all_messages)}")
-
-        except ImportError:
-            print_warning("dateutil not installed, skipping log fetch")
-            print_info("Install with: pip install python-dateutil")
-        except Exception as e:
-            print_warning(f"Could not fetch container logs: {e}")
-            print_info("This is not critical for the test")
-
-        # ====================================================================
-        # Step 9: Summary
+        # Step 7: Summary
         # ====================================================================
         print_header("Test Summary")
         print_success(f"User created: {test_email} (UUID: {user_id})")
         print_success(f"API key generated: {api_key[:20]}...{api_key[-10:]}")
-        print_success(f"User config created in DynamoDB with API keys")
         print_success(f"Container requested: {container_id}")
         print_info(f"Container status: {container_data['status']}")
 
         print("\n" + BOLD + "What happens next (in AWS ECS):" + RESET)
         print("1. ECS Fargate task launches in AWS (clawtalk-dev cluster)")
-        print("2. Container startup script runs with these env vars:")
-        print(f"   - API_KEY=<user's auth_gateway_api_key>")
-        print(f"   - CONTAINER_ID={container_id}")
-        print("   - CONFIG_NAME=default")
-        print(f"   - ORCHESTRATOR_URL={ORCHESTRATOR_URL}")
-        print("3. Container calls orchestrator config API:")
-        print(f"   - GET {ORCHESTRATOR_URL}/config/default")
-        print("   - Authorization: Bearer <API_KEY>")
-        print("4. Orchestrator returns user configuration with:")
-        print("   - llm_provider, anthropic_api_key")
-        print("   - auth_gateway_url, auth_gateway_api_key")
-        print("   - openclaw_url, openclaw_model, etc.")
-        print("5. Container validates config and writes files:")
+        print("2. Container startup script (docker-start.sh) runs")
+        print("3. fetch_config.py is called with these env vars:")
+        print(f"   - USER_ID={user_id}")
+        print(f"   - CONFIG_NAME=default")
+        print(f"   - DYNAMODB_TABLE={DYNAMODB_TABLE}")
+        print(f"   - DYNAMODB_REGION={DYNAMODB_REGION}")
+        print("4. fetch_config.py queries AWS DynamoDB:")
+        print(f"   - USER config: pk=USER#{user_id}, sk=CONFIG#default")
+        print("   - SYSTEM config: pk=SYSTEM, sk=CONFIG#defaults")
+        print("5. It writes two config files in the container:")
         print("   - ~/.openclaw/openclaw.json (OpenClaw gateway config)")
         print("   - ~/.clawtalk/clawtalk.json (openclaw-agent config)")
         print("6. Container starts OpenClaw gateway and openclaw-agent")
