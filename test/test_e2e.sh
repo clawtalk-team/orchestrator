@@ -110,7 +110,7 @@ if docker ps | grep -q orchestrator-dynamodb-test; then
     log_info "DynamoDB is already running"
 else
     log_info "Starting DynamoDB local..."
-    docker compose -f "$SCRIPT_DIR/docker compose.e2e.yml" up -d dynamodb-local
+    docker compose -f "$SCRIPT_DIR/docker-compose.e2e.yml" up -d dynamodb-local
 
     log_info "Waiting for DynamoDB to be ready..."
     for i in {1..30}; do
@@ -196,7 +196,7 @@ log_info "Building and starting test container..."
 log_info "This may take a few minutes on first run..."
 
 cd "$ORCHESTRATOR_DIR"
-docker compose -f test/docker compose.e2e.yml up -d --build test-container
+docker compose -f test/docker-compose.e2e.yml up -d --build test-container
 
 log_info "Waiting for all services to be healthy..."
 log_info "This may take up to 60 seconds..."
@@ -354,4 +354,4 @@ log_info "  docker exec orchestrator-test-container cat /tmp/agent.log"
 log_info "  docker exec orchestrator-test-container cat /tmp/openclaw.log"
 log_info ""
 log_info "To stop:"
-log_info "  docker compose -f test/docker compose.e2e.yml down"
+log_info "  docker compose -f test/docker-compose.e2e.yml down"

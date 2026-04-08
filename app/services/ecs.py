@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -88,21 +87,14 @@ def create_container(
     try:
         ecs = _get_ecs_client()
 
-        # Minimal environment variables - container fetches config from DynamoDB
+        # Environment variables - container fetches config from orchestrator API
         environment = [
-            {"name": "USER_ID", "value": user_id},
+            {"name": "API_KEY", "value": api_key},
             {"name": "CONTAINER_ID", "value": container_id},
             {"name": "CONFIG_NAME", "value": config_name},
-            {"name": "DYNAMODB_TABLE", "value": settings.containers_table},
-            {"name": "DYNAMODB_REGION", "value": settings.dynamodb_region},
+            {"name": "ORCHESTRATOR_URL", "value": settings.orchestrator_url},
             {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
-
-        # For local development, pass DynamoDB endpoint
-        if settings.dynamodb_endpoint:
-            environment.append(
-                {"name": "DYNAMODB_ENDPOINT", "value": settings.dynamodb_endpoint}
-            )
 
         overrides = {
             "containerOverrides": [
