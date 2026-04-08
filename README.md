@@ -106,6 +106,11 @@ See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for complete deployment and monit
 
 ## API Endpoints
 
+### Interactive API Documentation
+
+- `GET /docs` - Swagger UI with built-in authentication (click "Authorize" button to enter your API key)
+- `GET /redoc` - ReDoc API documentation
+
 ### Container Management
 
 - `POST /containers` - Create new container

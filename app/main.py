@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from botocore.exceptions import ClientError, EndpointConnectionError
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
@@ -104,6 +105,41 @@ app.add_middleware(APIKeyMiddleware)
 app.include_router(health.router)
 app.include_router(containers.router)
 app.include_router(config.router)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    # Add Bearer token security scheme
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "API Key",
+            "description": "Enter your API key (without 'Bearer ' prefix)",
+        }
+    }
+    # Apply security globally to all endpoints except public ones
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            if method != "parameters":
+                # Don't apply security to /health endpoint
+                if path == "/health":
+                    continue
+                openapi_schema["paths"][path][method]["security"] = [
+                    {"BearerAuth": []}
+                ]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 @app.get("/", include_in_schema=False)

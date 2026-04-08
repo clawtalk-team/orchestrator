@@ -254,3 +254,32 @@ def test_access_control_cross_user(mock_get_auth_client, authenticated_client, s
     response = authenticated_client.get("/containers/oc-test123")
 
     assert response.status_code == 404
+
+
+def test_openapi_schema_has_bearer_auth(client):
+    """Test that OpenAPI schema includes Bearer token security scheme."""
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schema = response.json()
+
+    # Check that BearerAuth security scheme is defined
+    assert "components" in schema
+    assert "securitySchemes" in schema["components"]
+    assert "BearerAuth" in schema["components"]["securitySchemes"]
+
+    bearer_auth = schema["components"]["securitySchemes"]["BearerAuth"]
+    assert bearer_auth["type"] == "http"
+    assert bearer_auth["scheme"] == "bearer"
+    assert bearer_auth["bearerFormat"] == "API Key"
+
+    # Check that security is applied to protected endpoints
+    assert "/containers" in schema["paths"]
+    post_method = schema["paths"]["/containers"]["post"]
+    assert "security" in post_method
+    assert {"BearerAuth": []} in post_method["security"]
+
+    # Check that /health endpoint does not have security
+    assert "/health" in schema["paths"]
+    health_method = schema["paths"]["/health"]["get"]
+    assert "security" not in health_method
