@@ -46,14 +46,12 @@ load_dotenv()
 
 # AWS Lambda endpoint for auth-gateway
 AUTH_GATEWAY_URL = os.getenv(
-    "AUTH_GATEWAY_URL",
-    "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com"
+    "AUTH_GATEWAY_URL", "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com"
 )
 
 # AWS Lambda endpoint for orchestrator
 ORCHESTRATOR_URL = os.getenv(
-    "ORCHESTRATOR_URL",
-    "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com"
+    "ORCHESTRATOR_URL", "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com"
 )
 
 # DynamoDB Configuration (AWS - no endpoint for real DynamoDB)
@@ -234,9 +232,7 @@ def query_dynamodb_config(user_id: str, config_name: str = "default") -> Optiona
 
         # Get system config
         print_info("Fetching SYSTEM config from DynamoDB...")
-        system_response = table.get_item(
-            Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"}
-        )
+        system_response = table.get_item(Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"})
 
         config = {
             "user_config": user_response.get("Item"),
@@ -249,7 +245,9 @@ def query_dynamodb_config(user_id: str, config_name: str = "default") -> Optiona
             masked_config = dict(user_response["Item"])
             for key in ["anthropic_api_key", "openai_api_key", "auth_gateway_api_key"]:
                 if key in masked_config and masked_config[key]:
-                    masked_config[key] = f"{masked_config[key][:10]}...{masked_config[key][-4:]}"
+                    masked_config[
+                        key
+                    ] = f"{masked_config[key][:10]}...{masked_config[key][-4:]}"
             print_json("User Config (masked)", masked_config)
         else:
             print_warning("No user config found in DynamoDB")
@@ -444,16 +442,12 @@ def main():
         print_info("These are the env vars that ECS will pass to the container:")
 
         container_env = {
-            "USER_ID": user_id,
+            "API_KEY": f"{api_key[:20]}...{api_key[-10:]}",  # Masked for display
             "CONTAINER_ID": container_id,
             "CONFIG_NAME": "default",
-            "DYNAMODB_TABLE": DYNAMODB_TABLE,
-            "DYNAMODB_REGION": DYNAMODB_REGION,
+            "ORCHESTRATOR_URL": ORCHESTRATOR_URL,
             "OPENCLAW_DISABLE_BONJOUR": "1",
         }
-
-        if DYNAMODB_ENDPOINT:
-            container_env["DYNAMODB_ENDPOINT"] = DYNAMODB_ENDPOINT
 
         print_json("Container Environment Variables", container_env)
 
@@ -508,7 +502,9 @@ def main():
 
             time.sleep(poll_interval)
         else:
-            print_warning(f"Container did not reach RUNNING state in {max_attempts * poll_interval}s")
+            print_warning(
+                f"Container did not reach RUNNING state in {max_attempts * poll_interval}s"
+            )
             print_info("This is expected for ECS deployments that take time to spin up")
 
         # ====================================================================
@@ -534,21 +530,20 @@ def main():
 
             # List tasks and find the one for this container
             tasks_response = ecs_client.list_tasks(
-                cluster=ECS_CLUSTER_NAME,
-                desiredStatus="RUNNING"
+                cluster=ECS_CLUSTER_NAME, desiredStatus="RUNNING"
             )
 
             task_arn = None
             if tasks_response["taskArns"]:
                 # Get task details to find our container
                 tasks = ecs_client.describe_tasks(
-                    cluster=ECS_CLUSTER_NAME,
-                    tasks=tasks_response["taskArns"]
+                    cluster=ECS_CLUSTER_NAME, tasks=tasks_response["taskArns"]
                 )
 
                 # Find task that was started around the same time as our container
                 # (within 60 seconds of container creation)
                 from dateutil import parser as date_parser
+
                 container_created = date_parser.parse(container_data["created_at"])
 
                 for task in tasks["tasks"]:
@@ -584,7 +579,7 @@ def main():
                         streams_response = logs_client.describe_log_streams(
                             logGroupName=log_group,
                             logStreamNamePrefix=log_stream_prefix,
-                            limit=1
+                            limit=1,
                         )
 
                         if not streams_response["logStreams"]:
@@ -592,14 +587,16 @@ def main():
                             time.sleep(5)
                             continue
 
-                        log_stream_name = streams_response["logStreams"][0]["logStreamName"]
+                        log_stream_name = streams_response["logStreams"][0][
+                            "logStreamName"
+                        ]
 
                         # Fetch log events
                         get_logs_kwargs = {
                             "logGroupName": log_group,
                             "logStreamName": log_stream_name,
                             "startFromHead": True,
-                            "limit": 100
+                            "limit": 100,
                         }
 
                         if last_timestamp:
