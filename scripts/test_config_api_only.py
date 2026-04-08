@@ -9,18 +9,33 @@ without spinning up containers or AWS resources.
 import os
 import sys
 import time
-from scripts.test_end_to_end_flow import (
-    AUTH_GATEWAY_URL,
-    ORCHESTRATOR_URL,
-    make_request,
-    print_header,
-    print_step,
-    print_success,
-    print_error,
-    print_info,
-    GREEN,
-    RESET,
-)
+
+try:
+    from test_end_to_end_flow import (
+        AUTH_GATEWAY_URL,
+        ORCHESTRATOR_URL,
+        make_request,
+        print_header,
+        print_step,
+        print_success,
+        print_error,
+        print_info,
+        GREEN,
+        RESET,
+    )
+except ImportError:
+    from scripts.test_end_to_end_flow import (
+        AUTH_GATEWAY_URL,
+        ORCHESTRATOR_URL,
+        make_request,
+        print_header,
+        print_step,
+        print_success,
+        print_error,
+        print_info,
+        GREEN,
+        RESET,
+    )
 
 def main():
     """Run the config API smoke test."""
@@ -102,11 +117,11 @@ def main():
         print_success("Config retrieved via Config API")
 
         # Verify data
-        assert config_data["config_name"] == "default"
-        assert config_data["llm_provider"] == "anthropic"
-        assert config_data["openclaw_model"] == "claude-3-5-sonnet-20241022"
-        assert "anthropic_api_key" in config_data
-        assert "auth_gateway_api_key" in config_data
+        assert config_data["config_name"] == "default", f"Expected config_name 'default', got {config_data.get('config_name')}"
+        assert config_data["llm_provider"] == "anthropic", f"Expected llm_provider 'anthropic', got {config_data.get('llm_provider')}"
+        assert config_data["openclaw_model"] == "claude-3-5-sonnet-20241022", f"Expected model 'claude-3-5-sonnet-20241022', got {config_data.get('openclaw_model')}"
+        assert "anthropic_api_key" in config_data, "anthropic_api_key missing from response"
+        assert "auth_gateway_api_key" in config_data, "auth_gateway_api_key missing from response"
         print_success("Config data validated")
 
         print(f"\n{GREEN}✓ Config API smoke test passed!{RESET}\n")
