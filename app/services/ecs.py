@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -24,19 +23,6 @@ def _get_ecs_client():
 def _generate_container_id() -> str:
     """Generate a container ID."""
     return f"oc-{uuid.uuid4().hex[:8]}"
-
-
-def _get_orchestrator_url() -> str:
-    """Get the orchestrator URL that containers should use to fetch config."""
-    # Check for explicit config first
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL")
-    if orchestrator_url:
-        return orchestrator_url
-
-    # For Lambda/AWS deployments, containers should use the API Gateway URL
-    # This should be configured in SSM or environment
-    # Default to localhost for local development
-    return "http://localhost:8000"
 
 
 def create_container(
@@ -101,20 +87,12 @@ def create_container(
     try:
         ecs = _get_ecs_client()
 
-        # Get user's API key for config API authentication
-        config_service = UserConfigService()
-        user_config = config_service.get_user_config(user_id, config_name)
-        if not user_config or not user_config.get("auth_gateway_api_key"):
-            raise ValueError(f"User config missing auth_gateway_api_key for config: {config_name}")
-
-        api_key = user_config["auth_gateway_api_key"]
-
         # Environment variables - container fetches config from orchestrator API
         environment = [
             {"name": "API_KEY", "value": api_key},
             {"name": "CONTAINER_ID", "value": container_id},
             {"name": "CONFIG_NAME", "value": config_name},
-            {"name": "ORCHESTRATOR_URL", "value": _get_orchestrator_url()},
+            {"name": "ORCHESTRATOR_URL", "value": settings.orchestrator_url},
             {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
 

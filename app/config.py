@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     auth_gateway_url: str = "http://localhost:8001"
     auth_gateway_timeout: float = 5.0  # seconds
 
+    # Orchestrator API URL (for containers to fetch config)
+    orchestrator_url: str = "http://localhost:8000"
+
     # SSM Parameter Store
     ssm_prefix: str = "/clawtalk/orchestrator"
 

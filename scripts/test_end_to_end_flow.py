@@ -61,6 +61,10 @@ DYNAMODB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT")  # None = use AWS
 DYNAMODB_TABLE = os.getenv("CONTAINERS_TABLE", "openclaw-containers-dev")
 DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "ap-southeast-2")
 
+# ECS Configuration
+ECS_CLUSTER_NAME = os.getenv("ECS_CLUSTER_NAME", "clawtalk-dev")
+ECS_LOG_GROUP = os.getenv("ECS_LOG_GROUP", "/ecs/openclaw-agent-dev")
+
 # AWS Credentials (use profile or explicit keys)
 AWS_PROFILE = os.getenv("AWS_PROFILE", "personal")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "ap-southeast-2")
@@ -530,7 +534,7 @@ def main():
 
             # List tasks and find the one for this container
             tasks_response = ecs_client.list_tasks(
-                cluster="clawtalk-dev",
+                cluster=ECS_CLUSTER_NAME,
                 desiredStatus="RUNNING"
             )
 
@@ -538,7 +542,7 @@ def main():
             if tasks_response["taskArns"]:
                 # Get task details to find our container
                 tasks = ecs_client.describe_tasks(
-                    cluster="clawtalk-dev",
+                    cluster=ECS_CLUSTER_NAME,
                     tasks=tasks_response["taskArns"]
                 )
 
@@ -562,7 +566,7 @@ def main():
                 print_info("Skipping log fetch")
             else:
                 # Get log stream name
-                log_group = "/ecs/openclaw-agent-dev"
+                log_group = ECS_LOG_GROUP
                 log_stream_prefix = f"ecs/openclaw-agent/{task_id}"
 
                 print_info(f"Fetching logs from {log_group}/{log_stream_prefix}")
