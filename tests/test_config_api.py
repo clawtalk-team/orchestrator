@@ -706,3 +706,202 @@ class TestConfigBackwardCompatibility:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["llm_provider"] == "anthropic"
+
+
+class TestConfigMerge:
+    """Test configuration merge behavior for containers."""
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_get_config_merged_by_default(self, mock_get_auth_client, client):
+        """GET /config/{config_name} merges with system config by default."""
+        # Mock auth-gateway response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        # Create system config
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_url": "http://localhost:18789",
+            "openclaw_token": "test-token-123",
+            "voice_gateway_url": "ws://voice.example.com",
+        })
+
+        # Create user config
+        client.post(
+            "/config",
+            json={
+                "config_name": "default",
+                "llm_provider": "anthropic",
+                "anthropic_api_key": "sk-ant-test123",
+                "auth_gateway_api_key": "user-api-key",
+            },
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        # Get merged config (default behavior)
+        response = client.get(
+            "/config/default",
+            headers={"Authorization": "Bearer test-api-key"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Verify user config fields present
+        assert data["llm_provider"] == "anthropic"
+        assert data["anthropic_api_key"] == "sk-ant-test123"
+        assert data["auth_gateway_api_key"] == "user-api-key"
+
+        # Verify system config fields present
+        assert data["auth_gateway_url"] == "https://auth.example.com"
+        assert data["openclaw_url"] == "http://localhost:18789"
+        assert data["openclaw_token"] == "test-token-123"
+        assert data["voice_gateway_url"] == "ws://voice.example.com"
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_get_config_merged_true_explicit(self, mock_get_auth_client, client):
+        """GET /config/{config_name}?merged=true explicitly requests merge."""
+        # Mock auth-gateway response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        # Create system config
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_url": "http://localhost:18789",
+            "openclaw_token": "test-token-123",
+        })
+
+        # Create user config
+        client.post(
+            "/config",
+            json={
+                "config_name": "default",
+                "llm_provider": "anthropic",
+            },
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        # Get merged config explicitly
+        response = client.get(
+            "/config/default?merged=true",
+            headers={"Authorization": "Bearer test-api-key"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Verify merged config has both user and system fields
+        assert data["llm_provider"] == "anthropic"
+        assert data["auth_gateway_url"] == "https://auth.example.com"
+        assert data["openclaw_url"] == "http://localhost:18789"
+        assert data["openclaw_token"] == "test-token-123"
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_get_config_unmerged(self, mock_get_auth_client, client):
+        """GET /config/{config_name}?merged=false returns only user config."""
+        # Mock auth-gateway response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        # Create system config
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_url": "http://localhost:18789",
+            "openclaw_token": "test-token-123",
+        })
+
+        # Create user config
+        client.post(
+            "/config",
+            json={
+                "config_name": "default",
+                "llm_provider": "anthropic",
+                "anthropic_api_key": "sk-ant-test123",
+            },
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        # Get unmerged config (user config only)
+        response = client.get(
+            "/config/default?merged=false",
+            headers={"Authorization": "Bearer test-api-key"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # Verify user config fields present
+        assert data["llm_provider"] == "anthropic"
+        assert data["anthropic_api_key"] == "sk-ant-test123"
+
+        # Verify system config fields NOT present
+        assert "auth_gateway_url" not in data
+        assert "openclaw_url" not in data
+        assert "openclaw_token" not in data
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_merged_config_user_overrides_system(self, mock_get_auth_client, client):
+        """User config values override system config values when merged."""
+        # Mock auth-gateway response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        # Create system config with openclaw_token
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_token": "system-token-123",
+        })
+
+        # Create user config that overrides openclaw_token
+        client.post(
+            "/config",
+            json={
+                "config_name": "default",
+                "llm_provider": "anthropic",
+                "openclaw_token": "user-token-456",  # Override system value
+            },
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        # Get merged config
+        response = client.get(
+            "/config/default",
+            headers={"Authorization": "Bearer test-api-key"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # User value should override system value
+        assert data["openclaw_token"] == "user-token-456"
+        # System values not overridden should be present
+        assert data["auth_gateway_url"] == "https://auth.example.com"

@@ -602,6 +602,39 @@ def main():
                 print_success(f"Log collection complete ({elapsed:.0f}s)")
                 print_info(f"Total log lines collected: {len(all_messages)}")
 
+                # ============================================================
+                # Validate critical log entries
+                # ============================================================
+                print_info("\nValidating critical log entries...")
+
+                # Check for openclaw-agent startup
+                agent_started = False
+                for message in all_messages:
+                    if "openclaw-agent" in message.lower() and ("start" in message.lower() or "running" in message.lower()):
+                        agent_started = True
+                        print_success(f"Found openclaw-agent startup: {message.strip()}")
+                        break
+
+                if not agent_started:
+                    print_error("FAILED: openclaw-agent startup not found in logs")
+                    print_error("Expected to see openclaw-agent starting in container logs")
+                    sys.exit(1)
+
+                # Check for voice-gateway connection
+                voice_gateway_connected = False
+                for message in all_messages:
+                    if "voice-gateway" in message.lower() and ("connect" in message.lower() or "connected" in message.lower()):
+                        voice_gateway_connected = True
+                        print_success(f"Found voice-gateway connection: {message.strip()}")
+                        break
+
+                if not voice_gateway_connected:
+                    print_error("FAILED: openclaw-agent connection to voice-gateway not found in logs")
+                    print_error("Expected to see openclaw-agent connecting to voice-gateway")
+                    sys.exit(1)
+
+                print_success("All critical log entries validated successfully!")
+
         except ImportError:
             print_warning("dateutil not installed, skipping log fetch")
             print_info("Install with: pip install python-dateutil")

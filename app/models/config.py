@@ -108,7 +108,7 @@ class UserConfigResponse(ConfigBase):
     created_at: str = Field(..., description="ISO 8601 timestamp when created")
     updated_at: str = Field(..., description="ISO 8601 timestamp when last updated")
 
-    # Optional standard fields
+    # Optional user config fields
     llm_provider: Optional[str] = None
     openclaw_model: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -117,6 +117,17 @@ class UserConfigResponse(ConfigBase):
     auth_gateway_api_key: Optional[str] = None
     openclaw_token: Optional[str] = None
     max_containers: Optional[int] = None
+
+    # System config fields (included when merged=true)
+    auth_gateway_url: Optional[str] = Field(
+        None, description="Auth gateway URL (from system config)"
+    )
+    openclaw_url: Optional[str] = Field(
+        None, description="OpenClaw gateway URL (from system config)"
+    )
+    voice_gateway_url: Optional[str] = Field(
+        None, description="Voice gateway URL (from system config)"
+    )
 
     model_config = ConfigDict(
         extra="allow",

@@ -10,6 +10,9 @@ Usage:
   # Delete multiple containers
   python scripts/delete_containers.py CONTAINER_ID1 CONTAINER_ID2 ... --user-id USER_ID [--env ENV]
 
+  # Delete all containers (system-wide)
+  python scripts/delete_containers.py --all [--env ENV]
+
   # Delete all containers for a user
   python scripts/delete_containers.py --user-id USER_ID --all [--env ENV]
 
@@ -25,50 +28,90 @@ import boto3
 
 
 def get_containers(
-    user_id: str, env: str, profile: str, region: str, status: Optional[str] = None
+    user_id: Optional[str], env: str, profile: str, region: str, status: Optional[str] = None
 ) -> List[dict]:
-    """Get containers for a user, optionally filtered by status."""
+    """Get containers for a user (or all users if user_id is None), optionally filtered by status."""
     table_name = f"openclaw-containers-{env}"
 
     session = boto3.Session(profile_name=profile, region_name=region)
     dynamodb = session.client("dynamodb")
 
-    print(f"==> Fetching containers for user {user_id}...")
+    if user_id:
+        print(f"==> Fetching containers for user {user_id}...")
+        # Query specific user's containers (filter by CONTAINER# to avoid deleting configs)
+        query_kwargs = {
+            "TableName": table_name,
+            "KeyConditionExpression": "pk = :pk AND begins_with(sk, :sk_prefix)",
+            "ExpressionAttributeValues": {
+                ":pk": {"S": f"USER#{user_id}"},
+                ":sk_prefix": {"S": "CONTAINER#"}
+            },
+        }
+        if status:
+            query_kwargs["FilterExpression"] = "#s = :status"
+            query_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+            query_kwargs["ExpressionAttributeValues"][":status"] = {"S": status}
 
-    # Build query with optional status filter
-    query_kwargs = {
-        "TableName": table_name,
-        "KeyConditionExpression": "pk = :pk",
-        "ExpressionAttributeValues": {":pk": {"S": f"USER#{user_id}"}},
-    }
-    if status:
-        query_kwargs["FilterExpression"] = "#s = :status"
-        query_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
-        query_kwargs["ExpressionAttributeValues"][":status"] = {"S": status}
+        # Query with pagination
+        containers = []
+        while True:
+            response = dynamodb.query(**query_kwargs)
 
-    # Query with pagination
-    containers = []
-    while True:
-        response = dynamodb.query(**query_kwargs)
+            # Parse items
+            for item in response.get("Items", []):
+                container = {
+                    "container_id": item.get("sk", {})
+                    .get("S", "")
+                    .replace("CONTAINER#", ""),
+                    "user_id": item.get("user_id", {}).get("S", ""),
+                    "status": item.get("status", {}).get("S", ""),
+                    "task_arn": item.get("task_arn", {}).get("S", ""),
+                    "pk": item.get("pk", {}).get("S", ""),
+                    "sk": item.get("sk", {}).get("S", ""),
+                }
+                containers.append(container)
 
-        # Parse items
-        for item in response.get("Items", []):
-            container = {
-                "container_id": item.get("sk", {})
-                .get("S", "")
-                .replace("CONTAINER#", ""),
-                "user_id": item.get("user_id", {}).get("S", ""),
-                "status": item.get("status", {}).get("S", ""),
-                "task_arn": item.get("task_arn", {}).get("S", ""),
-                "pk": item.get("pk", {}).get("S", ""),
-                "sk": item.get("sk", {}).get("S", ""),
-            }
-            containers.append(container)
+            # Handle pagination
+            if "LastEvaluatedKey" not in response:
+                break
+            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    else:
+        print(f"==> Fetching all containers (system-wide)...")
+        # Scan entire table
+        scan_kwargs = {
+            "TableName": table_name,
+        }
+        if status:
+            scan_kwargs["FilterExpression"] = "#s = :status"
+            scan_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+            scan_kwargs["ExpressionAttributeValues"] = {":status": {"S": status}}
 
-        # Handle pagination
-        if "LastEvaluatedKey" not in response:
-            break
-        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        # Scan with pagination
+        containers = []
+        while True:
+            response = dynamodb.scan(**scan_kwargs)
+
+            # Parse items
+            for item in response.get("Items", []):
+                # Only process CONTAINER items
+                sk = item.get("sk", {}).get("S", "")
+                if not sk.startswith("CONTAINER#"):
+                    continue
+
+                container = {
+                    "container_id": sk.replace("CONTAINER#", ""),
+                    "user_id": item.get("user_id", {}).get("S", ""),
+                    "status": item.get("status", {}).get("S", ""),
+                    "task_arn": item.get("task_arn", {}).get("S", ""),
+                    "pk": item.get("pk", {}).get("S", ""),
+                    "sk": item.get("sk", {}).get("S", ""),
+                }
+                containers.append(container)
+
+            # Handle pagination
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     return containers
 
@@ -132,10 +175,10 @@ def main():
     parser = argparse.ArgumentParser(description="Delete openclaw-agent containers")
     parser.add_argument("container_ids", nargs="*", help="Container IDs to delete")
     parser.add_argument(
-        "--user-id", required=True, help="User ID who owns the containers"
+        "--user-id", help="User ID who owns the containers (optional when using --all)"
     )
     parser.add_argument(
-        "--all", action="store_true", help="Delete all containers for the user"
+        "--all", action="store_true", help="Delete all containers (optionally filtered by --user-id)"
     )
     parser.add_argument(
         "--status", help="Delete containers with specific status (e.g., STOPPED)"
@@ -154,6 +197,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Validate arguments
+    if args.container_ids and not args.user_id:
+        parser.error("--user-id is required when specifying container IDs")
 
     # Determine which containers to delete
     containers_to_delete = []

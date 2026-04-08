@@ -184,25 +184,49 @@ async def get_system_config(request: Request) -> SystemConfigResponse:
 )
 async def get_user_config(
     request: Request,
-    config_name: str
+    config_name: str,
+    merged: bool = Query(
+        True,
+        description="If true, merge with system config (default); if false, return user config only"
+    )
 ) -> UserConfigResponse:
     """
     Get a specific user configuration by name.
 
     Returns the configuration with the given name for the authenticated user.
+
+    By default (merged=true), returns the merged configuration with system config values
+    (auth_gateway_url, openclaw_url, openclaw_token, voice_gateway_url) included.
+    This is required for containers to properly start openclaw-agent.
+
+    Set merged=false to get only the user-specific configuration without system defaults.
+
     Returns 404 if the configuration does not exist.
     """
     user_id = _get_user_id(request)
     config_service = UserConfigService()
 
-    config_data = config_service.get_user_config(user_id, config_name)
-    if not config_data:
+    # Check if user config exists
+    user_config_data = config_service.get_user_config(user_id, config_name)
+    if not user_config_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Configuration '{config_name}' not found"
         )
 
-    # config_data now includes created_at and updated_at from get_user_config
+    if merged:
+        # Return merged config with system values (required for containers)
+        system_config = config_service.get_system_config()
+
+        # Merge: user config overrides system config for shared fields
+        config_data = {
+            **system_config,
+            **user_config_data
+        }
+    else:
+        # Return only user config
+        config_data = user_config_data
+
     # Add config_name for the response
     response_data = {
         "config_name": config_name,
