@@ -152,6 +152,43 @@ def test_delete_container(aws_mocks, sample_container):
     assert retrieved is None
 
 
+def test_get_user_containers_ignores_config_items(aws_mocks):
+    """Test that get_user_containers filters out CONFIG items and only returns CONTAINER items."""
+    now = datetime.utcnow()
+
+    # Create a container
+    container = Container(
+        container_id="oc-test1",
+        user_id="user-123",
+        task_arn="arn:1",
+        status="RUNNING",
+        health_status="HEALTHY",
+        created_at=now,
+        updated_at=now,
+    )
+    dynamodb.create_container(container)
+
+    # Manually insert a CONFIG item for the same user (simulating user config)
+    table = dynamodb._get_table()
+    table.put_item(
+        Item={
+            "pk": "USER#user-123",
+            "sk": "CONFIG#default",
+            "user_id": "user-123",
+            "config_type": "user_config",
+            "llm_provider": "anthropic",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+    )
+
+    # Query should only return containers, not config items
+    result = dynamodb.get_user_containers("user-123")
+
+    assert len(result) == 1
+    assert result[0].container_id == "oc-test1"
+
+
 def test_get_running_containers(aws_mocks):
     """Test retrieving all running containers."""
     now = datetime.utcnow()
