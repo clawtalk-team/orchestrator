@@ -179,8 +179,11 @@ def get_user_containers(user_id: str, status: Optional[str] = None) -> List[Cont
         )
     else:
         response = table.query(
-            KeyConditionExpression="pk = :pk",
-            ExpressionAttributeValues={":pk": f"USER#{user_id}"},
+            KeyConditionExpression="pk = :pk AND begins_with(sk, :sk_prefix)",
+            ExpressionAttributeValues={
+                ":pk": f"USER#{user_id}",
+                ":sk_prefix": "CONTAINER#",
+            },
         )
 
     return [_deserialize_container(item) for item in response.get("Items", [])]
