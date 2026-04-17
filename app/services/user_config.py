@@ -166,32 +166,29 @@ class UserConfigService:
         """
         Get system-wide configuration.
 
+        Values are resolved in priority order:
+          1. DynamoDB system config record (SYSTEM / CONFIG#defaults)
+          2. Application settings / environment variables
+
         Returns:
             Dict containing system config (URLs, defaults, etc.)
         """
+        from app.config import get_settings
+
+        settings = get_settings()
+
         response = self.table.get_item(Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"})
+        item = response.get("Item", {})
 
-        if "Item" not in response:
-            # Return defaults if not found
-            from app.config import get_settings
-
-            settings = get_settings()
-            return {
-                "auth_gateway_url": settings.auth_gateway_url
-                or "http://localhost:8001",
-                "openclaw_url": "http://localhost:18789",
-                "voice_gateway_url": "ws://localhost:9090",
-            }
-
-        item = response["Item"]
         config = {
-            "auth_gateway_url": item.get("auth_gateway_url"),
+            "auth_gateway_url": item.get("auth_gateway_url") or settings.auth_gateway_url,
             "openclaw_url": item.get("openclaw_url"),
             "openclaw_token": item.get("openclaw_token"),
             "voice_gateway_url": item.get("voice_gateway_url"),
-            "updated_at": item.get("updated_at"),  # Include timestamp to avoid redundant read
+            "updated_at": item.get("updated_at"),
         }
-        # Convert any Decimal values to int/float
+        # Strip keys that are still None so callers get a clean dict
+        config = {k: v for k, v in config.items() if v is not None}
         return _convert_decimals(config)
 
     def save_system_config(self, config: Dict[str, Any]) -> None:
