@@ -167,8 +167,11 @@ class UserConfigService:
         Get system-wide configuration.
 
         Values are resolved in priority order:
-          1. DynamoDB system config record (SYSTEM / CONFIG#defaults)
-          2. Application settings / environment variables
+          1. Application settings / environment variables (deployment-time config is authoritative)
+          2. DynamoDB system config record (SYSTEM / CONFIG#defaults)
+
+        Env vars win over DynamoDB so that stale database values from local testing
+        cannot override correctly-configured deployment environment variables.
 
         Returns:
             Dict containing system config (URLs, defaults, etc.)
@@ -181,10 +184,13 @@ class UserConfigService:
         item = response.get("Item", {})
 
         config = {
-            "auth_gateway_url": item.get("auth_gateway_url") or settings.auth_gateway_url,
-            "openclaw_url": item.get("openclaw_url"),
-            "openclaw_token": item.get("openclaw_token"),
-            "voice_gateway_url": item.get("voice_gateway_url"),
+            # Explicit env var wins over DynamoDB; DynamoDB wins over settings default.
+            # This prevents stale DynamoDB values (e.g. from local testing) from overriding
+            # the correctly-configured env vars in a production deployment.
+            "auth_gateway_url": os.environ.get("AUTH_GATEWAY_URL") or item.get("auth_gateway_url") or settings.auth_gateway_url,
+            "openclaw_url": os.environ.get("OPENCLAW_URL") or item.get("openclaw_url"),
+            "openclaw_token": os.environ.get("OPENCLAW_GATEWAY_TOKEN") or item.get("openclaw_token"),
+            "voice_gateway_url": os.environ.get("VOICE_GATEWAY_URL") or item.get("voice_gateway_url"),
             "updated_at": item.get("updated_at"),
         }
         # Strip keys that are still None so callers get a clean dict

@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     ecs_security_groups: str = ""  # Comma-separated security group IDs
 
     # Auth Gateway
+    # Must be set via AUTH_GATEWAY_URL env var in production.
+    # Defaults to localhost only for local development.
     auth_gateway_url: str = "http://localhost:8001"
     auth_gateway_timeout: float = 5.0  # seconds
 
