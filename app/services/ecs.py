@@ -29,6 +29,7 @@ def create_container(
     user_id: str,
     api_key: str,
     config_name: str = "default",
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> Container:
     """
     Create a new ECS container for a user.
@@ -40,6 +41,7 @@ def create_container(
         user_id: The user ID
         api_key: The API key for auth-gateway (from Authorization header)
         config_name: Named configuration to use (default: "default")
+        env_vars: Additional environment variables to pass to the container
 
     Returns:
         Container record in PENDING status.
@@ -99,6 +101,12 @@ def create_container(
             {"name": "ORCHESTRATOR_URL", "value": settings.orchestrator_url},
             {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
+
+        # Add user-provided environment variables
+        if env_vars:
+            for key, value in env_vars.items():
+                environment.append({"name": key, "value": value})
+            logger.info(f"Added {len(env_vars)} custom env vars to container {container_id}")
 
         overrides = {
             "containerOverrides": [

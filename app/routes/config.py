@@ -151,6 +151,7 @@ async def create_user_config(
 @router.get(
     "/system",
     response_model=SystemConfigResponse,
+    response_model_exclude_none=True,
     summary="Get system configuration",
     response_description="System configuration",
     responses={403: {"description": "Admin access required"}}

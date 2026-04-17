@@ -393,13 +393,10 @@ class TestSystemConfig:
 
     @patch("app.middleware.auth.get_auth_client")
     def test_get_system_config(self, mock_get_auth_client, client, monkeypatch):
-        """GET /config/system returns system defaults."""
-        # Set master API key
+        """GET /config/system returns stored system config values."""
         monkeypatch.setenv("MASTER_API_KEY", "master-key-123")
 
-        # Clear settings cache to pick up new env var
         from app.config import get_settings
-
         get_settings.cache_clear()
 
         # Mock auth-gateway response (won't be called due to master key)
@@ -411,17 +408,28 @@ class TestSystemConfig:
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_get_auth_client.return_value = mock_client
 
+        # Populate system config so all fields are present
+        from app.services.user_config import UserConfigService
+        UserConfigService().save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_url": "http://openclaw.example.com",
+            "openclaw_token": "test-token",
+            "voice_gateway_url": "ws://voice.example.com",
+        })
+
         response = client.get(
             "/config/system", headers={"Authorization": "Bearer master-key-123"}
         )
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert "auth_gateway_url" in data
-        assert "openclaw_url" in data
-        assert "voice_gateway_url" in data
+        assert data["auth_gateway_url"] == "https://auth.example.com"
+        assert data["openclaw_url"] == "http://openclaw.example.com"
+        assert data["voice_gateway_url"] == "ws://voice.example.com"
+        # None fields must not appear in the response
+        for key, val in data.items():
+            assert val is not None, f"Field {key!r} should not be null"
 
-        # Clean up
         get_settings.cache_clear()
 
     @patch("app.middleware.auth.get_auth_client")
@@ -862,9 +870,8 @@ class TestConfigMerge:
         assert "openclaw_token" not in data
 
     @patch("app.middleware.auth.get_auth_client")
-    def test_merged_config_user_overrides_system(self, mock_get_auth_client, client):
-        """User config values override system config values when merged."""
-        # Mock auth-gateway response
+    def test_merged_config_system_wins_for_system_fields(self, mock_get_auth_client, client):
+        """System config always wins for system-level fields (URLs, tokens)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"user_id": "test-user"}
@@ -873,7 +880,6 @@ class TestConfigMerge:
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_get_auth_client.return_value = mock_client
 
-        # Create system config with openclaw_token
         from app.services.user_config import UserConfigService
         config_service = UserConfigService()
         config_service.save_system_config({
@@ -881,18 +887,18 @@ class TestConfigMerge:
             "openclaw_token": "system-token-123",
         })
 
-        # Create user config that overrides openclaw_token
+        # User config contains stale/overriding values for system fields
         client.post(
             "/config",
             json={
                 "config_name": "default",
                 "llm_provider": "anthropic",
-                "openclaw_token": "user-token-456",  # Override system value
+                "openclaw_token": "stale-user-token",
+                "auth_gateway_url": "http://stale-url.example.com",
             },
             headers={"Authorization": "Bearer test-api-key"},
         )
 
-        # Get merged config
         response = client.get(
             "/config/default",
             headers={"Authorization": "Bearer test-api-key"}
@@ -901,7 +907,165 @@ class TestConfigMerge:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
 
-        # User value should override system value
-        assert data["openclaw_token"] == "user-token-456"
-        # System values not overridden should be present
+        # System values must win regardless of what is in user config
+        assert data["openclaw_token"] == "system-token-123"
         assert data["auth_gateway_url"] == "https://auth.example.com"
+        # User-specific fields still come from user config
+        assert data["llm_provider"] == "anthropic"
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_merged_config_user_fields_preserved(self, mock_get_auth_client, client):
+        """User-specific fields (API keys, llm_provider) are preserved in merged config."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            "openclaw_url": "http://openclaw.example.com",
+            "openclaw_token": "system-token",
+        })
+
+        client.post(
+            "/config",
+            json={
+                "config_name": "default",
+                "llm_provider": "anthropic",
+                "anthropic_api_key": "sk-ant-user-key",
+                "auth_gateway_api_key": "user-api-key",
+            },
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        response = client.get(
+            "/config/default",
+            headers={"Authorization": "Bearer test-api-key"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        # User fields present
+        assert data["llm_provider"] == "anthropic"
+        assert data["anthropic_api_key"] == "sk-ant-user-key"
+        assert data["auth_gateway_api_key"] == "user-api-key"
+        # System fields also present
+        assert data["auth_gateway_url"] == "https://auth.example.com"
+        assert data["openclaw_url"] == "http://openclaw.example.com"
+        assert data["openclaw_token"] == "system-token"
+
+
+class TestSystemConfigFallback:
+    """Test get_system_config fallback to settings when DynamoDB values are missing."""
+
+    def test_auth_gateway_url_fallback_to_settings_when_no_record(self, client, monkeypatch):
+        """auth_gateway_url falls back to AUTH_GATEWAY_URL env var when no system config record."""
+        monkeypatch.setenv("AUTH_GATEWAY_URL", "https://fallback.auth.example.com")
+        monkeypatch.setenv("MASTER_API_KEY", "master-key")
+
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        response = client.get("/config/system", headers={"Authorization": "Bearer master-key"})
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["auth_gateway_url"] == "https://fallback.auth.example.com"
+
+        get_settings.cache_clear()
+
+    def test_auth_gateway_url_fallback_to_settings_when_record_is_empty(self, client, monkeypatch):
+        """auth_gateway_url falls back to settings when system config record exists but is empty."""
+        monkeypatch.setenv("AUTH_GATEWAY_URL", "https://settings.auth.example.com")
+        monkeypatch.setenv("MASTER_API_KEY", "master-key")
+
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        # Write a system config record that intentionally omits auth_gateway_url
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "openclaw_url": "http://openclaw.example.com",
+            "openclaw_token": "tok-123",
+        })
+
+        response = client.get("/config/system", headers={"Authorization": "Bearer master-key"})
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        # Should fall back to settings value, not be missing
+        assert data["auth_gateway_url"] == "https://settings.auth.example.com"
+        # Other fields from DynamoDB still present
+        assert data["openclaw_url"] == "http://openclaw.example.com"
+
+        get_settings.cache_clear()
+
+    def test_system_config_strips_none_values(self, client, monkeypatch):
+        """None values from system config are not included in merged response."""
+        monkeypatch.setenv("MASTER_API_KEY", "master-key")
+        monkeypatch.delenv("AUTH_GATEWAY_URL", raising=False)
+
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        # Save system config with only partial fields
+        from app.services.user_config import UserConfigService
+        config_service = UserConfigService()
+        config_service.save_system_config({
+            "auth_gateway_url": "https://auth.example.com",
+            # openclaw_url and openclaw_token deliberately omitted
+        })
+
+        response = client.get("/config/system", headers={"Authorization": "Bearer master-key"})
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["auth_gateway_url"] == "https://auth.example.com"
+        # Missing fields should not appear as null — they should be absent
+        assert "openclaw_url" not in data
+        assert "openclaw_token" not in data
+
+        get_settings.cache_clear()
+
+    @patch("app.middleware.auth.get_auth_client")
+    def test_merged_config_includes_auth_gateway_url_from_settings(
+        self, mock_get_auth_client, client, monkeypatch
+    ):
+        """Merged /config response includes auth_gateway_url even if not in DynamoDB."""
+        monkeypatch.setenv("AUTH_GATEWAY_URL", "https://env.auth.example.com")
+
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"user_id": "test-user"}
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_get_auth_client.return_value = mock_client
+
+        # Create user config — no system config record
+        client.post(
+            "/config",
+            json={"config_name": "default", "llm_provider": "anthropic"},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        response = client.get(
+            "/config/default",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        # auth_gateway_url should always be present via settings fallback
+        assert data["auth_gateway_url"] == "https://env.auth.example.com"
+
+        get_settings.cache_clear()

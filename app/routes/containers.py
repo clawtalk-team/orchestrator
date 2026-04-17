@@ -28,6 +28,9 @@ async def create_container(request: Request, req: ContainerRequest):
     The API key from the Authorization header will be stored in DynamoDB for the container
     to use for authentication with other services. If a named config does not exist, it will
     be created with default values.
+
+    Optional environment variables can be passed in the request body to customize container
+    behavior (e.g. DEBUG=true for verbose logging).
     """
     user_id = request.state.user_id
     api_key = request.state.api_key
@@ -38,6 +41,7 @@ async def create_container(request: Request, req: ContainerRequest):
         user_id=user_id,
         api_key=api_key,
         config_name=config_name,
+        env_vars=req.env_vars,
     )
     logger.info(
         "create_container done: user=%s container=%s status=%s",
