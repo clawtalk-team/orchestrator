@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -6,6 +7,7 @@ from app.models.container import (ContainerHealthResponse, ContainerRequest,
                                   ContainerResponse)
 from app.services import dynamodb, ecs
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/containers", tags=["containers"])
 
 
@@ -26,15 +28,26 @@ async def create_container(request: Request, req: ContainerRequest):
     The API key from the Authorization header will be stored in DynamoDB for the container
     to use for authentication with other services. If a named config does not exist, it will
     be created with default values.
+
+    Optional environment variables can be passed in the request body to customize container
+    behavior (e.g. DEBUG=true for verbose logging).
     """
     user_id = request.state.user_id
     api_key = request.state.api_key
+    config_name = req.config_name or "default"
 
-    # Create container (will auto-create config if not exists)
+    logger.info("create_container: user=%s config=%s", user_id, config_name)
     container = ecs.create_container(
         user_id=user_id,
         api_key=api_key,
-        config_name=req.config_name or "default",
+        config_name=config_name,
+        env_vars=req.env_vars,
+    )
+    logger.info(
+        "create_container done: user=%s container=%s status=%s",
+        user_id,
+        container.container_id,
+        container.status,
     )
     return container.to_response()
 
@@ -84,6 +97,7 @@ async def get_container(request: Request, container_id: str):
 
     container = dynamodb.get_container(user_id=user_id, container_id=container_id)
     if not container:
+        logger.warning("get_container: not found user=%s container=%s", user_id, container_id)
         raise HTTPException(status_code=404, detail="Container not found")
 
     return container.to_response()
@@ -109,8 +123,10 @@ async def delete_container(request: Request, container_id: str):
 
     container = dynamodb.get_container(user_id=user_id, container_id=container_id)
     if not container:
+        logger.warning("delete_container: not found user=%s container=%s", user_id, container_id)
         raise HTTPException(status_code=404, detail="Container not found")
 
+    logger.info("delete_container: user=%s container=%s", user_id, container_id)
     ecs.stop_container(user_id=user_id, container_id=container_id)
 
 

@@ -88,7 +88,11 @@ class ContainerRequest(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {"name": "my-agent-container", "config_name": "default"}
+            "example": {
+                "name": "my-agent-container",
+                "config_name": "default",
+                "env_vars": {"DEBUG": "true"},
+            }
         }
     )
 
@@ -97,6 +101,10 @@ class ContainerRequest(BaseModel):
     )
     config_name: Optional[str] = Field(
         default="default", description="Named configuration to use (default: 'default')"
+    )
+    env_vars: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Additional environment variables to pass to the container (e.g. {'DEBUG': 'true'})",
     )
 
 

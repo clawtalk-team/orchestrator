@@ -204,6 +204,27 @@ def make_request(
         raise
 
 
+def make_simple_request(
+    method: str,
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    json_data: Optional[Dict[str, Any]] = None,
+) -> requests.Response:
+    """Make an HTTP request without verbose logging."""
+    try:
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            json=json_data,
+            timeout=30,
+        )
+        return response
+    except requests.exceptions.RequestException as e:
+        print_error(f"Request failed: {e}")
+        raise
+
+
 def verify_config_via_api(api_key: str, config_name: str = "default") -> Optional[Dict]:
     """Verify configuration via Config API."""
     print_info(f"Retrieving config '{config_name}' via Config API...")
@@ -367,10 +388,77 @@ def main():
         print_info(f"  Auth Gateway API Key: {api_key[:20]}...")
 
         # ====================================================================
-        # Step 4: Create Container via Orchestrator
+        # Step 3b: Update Config with Full System Values
         # ====================================================================
-        print_step(4, "Create container via orchestrator")
+        print_step("3b", "Update user config with complete configuration")
+        print_info("Adding system URLs and infrastructure config...")
+
+        response = make_request(
+            method="PUT",
+            url=f"{ORCHESTRATOR_URL}/config/default",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json_data={
+                "llm_provider": "anthropic",
+                "anthropic_api_key": anthropic_api_key,
+                "openclaw_model": "claude-3-5-sonnet-20241022",
+                "auth_gateway_api_key": api_key,
+                "auth_gateway_url": AUTH_GATEWAY_URL,
+                "openclaw_url": "http://localhost:18789",
+                "openclaw_token": "test-token-123",
+                "voice_gateway_url": "ws://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
+            },
+            description="Update config with complete system and user values",
+        )
+
+        if response.status_code != 200:
+            print_error(f"Failed to update user config: {response.status_code}")
+            if response.text:
+                print_error(f"Error: {response.text}")
+            sys.exit(1)
+
+        updated_config = response.json()
+        print_success("User config updated with complete configuration")
+        print_info("  Config now includes:")
+        print_info("    - LLM settings (provider, model, API key)")
+        print_info("    - Auth gateway config (URL, API key)")
+        print_info("    - OpenClaw gateway config (URL, token)")
+        print_info("    - Voice gateway URL")
+
+        # ====================================================================
+        # Step 4: Verify Updated Config
+        # ====================================================================
+        print_step(4, "Verify updated configuration")
+        verify_config_via_api(api_key, "default")
+
+        # ====================================================================
+        # Step 5: Create Container via Orchestrator
+        # ====================================================================
+        print_step(5, "Create container via orchestrator")
         print_info("This will trigger ECS task creation...")
+
+        # Build container request with optional env vars
+        container_request = {
+            "config_name": "default",
+        }
+
+        # Add DEBUG=true env var for verbose container logs
+        container_env_vars = {
+            "DEBUG": "true",
+            "RUN_MODE": "production",
+        }
+
+        # Allow override from environment variable
+        if os.getenv("CONTAINER_DEBUG") == "false":
+            container_env_vars.pop("DEBUG", None)
+            print_info("Container DEBUG mode disabled (CONTAINER_DEBUG=false)")
+        else:
+            print_info("Container DEBUG mode enabled (pass CONTAINER_DEBUG=false to disable)")
+
+        if container_env_vars:
+            container_request["env_vars"] = container_env_vars
 
         response = make_request(
             method="POST",
@@ -379,9 +467,7 @@ def main():
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json_data={
-                "config_name": "default",
-            },
+            json_data=container_request,
             description="Create new container for user",
         )
 
@@ -399,12 +485,6 @@ def main():
         print_info(f"Initial Status: {container_data['status']}")
 
         # ====================================================================
-        # Step 5: Verify Config via API
-        # ====================================================================
-        print_step(5, "Verify configuration via Config API")
-        config = verify_config_via_api(api_key, "default")
-
-        # ====================================================================
         # Step 6: Show Container Startup Flow
         # ====================================================================
         print_step(6, "Show container startup configuration flow")
@@ -417,6 +497,10 @@ def main():
             "ORCHESTRATOR_URL": ORCHESTRATOR_URL,
             "OPENCLAW_DISABLE_BONJOUR": "1",
         }
+
+        # Add custom env vars if provided
+        if container_env_vars:
+            container_env.update(container_env_vars)
 
         print_json("Container Environment Variables", container_env)
 
@@ -437,14 +521,16 @@ def main():
         print_info("Polling for container status changes...")
 
         max_attempts = 60
-        poll_interval = 5
+        poll_interval = 15
+        start_time = time.time()
+        pending_start_time = None
+        running_time = None
 
         for attempt in range(max_attempts):
-            response = make_request(
+            response = make_simple_request(
                 method="GET",
                 url=f"{ORCHESTRATOR_URL}/containers/{container_id}",
                 headers={"Authorization": f"Bearer {api_key}"},
-                description=f"Poll attempt {attempt + 1}/{max_attempts}",
             )
 
             if response.status_code != 200:
@@ -454,22 +540,35 @@ def main():
 
             container_data = response.json()
             status = container_data["status"]
-            health_status = container_data.get("health_status", "UNKNOWN")
-            ip_address = container_data.get("ip_address")
+            task_arn = container_data.get("task_arn", "N/A")
 
-            print_info(
-                f"Status: {status}, Health: {health_status}, IP: {ip_address or 'pending'}"
-            )
+            # Track timing for PENDING -> RUNNING transition
+            if status == "PENDING" and pending_start_time is None:
+                pending_start_time = time.time()
+            elif status == "RUNNING" and pending_start_time is not None and running_time is None:
+                running_time = time.time() - pending_start_time
 
-            if status == "RUNNING" and health_status in ("HEALTHY", "STARTING"):
-                print_success(f"Container is running!")
-                print_json("Final Container State", container_data)
+            # Display concise status
+            elapsed = time.time() - start_time
+            status_line = f"[{elapsed:>5.0f}s] task_arn: {task_arn}, status: {status}"
+            if running_time is not None:
+                status_line += f" (PENDING→RUNNING: {running_time:.1f}s)"
+            print(f"  {status_line}")
 
-                if ip_address:
-                    print_info(f"Health endpoint: http://{ip_address}:8080/health")
-                    print_info(f"API endpoint: http://{ip_address}:8080")
+            if status == "RUNNING":
+                health_status = container_data.get("health_status", "UNKNOWN")
+                if health_status in ("HEALTHY", "STARTING"):
+                    print_success(f"Container is running!")
+                    if running_time is not None:
+                        print_info(f"Time from PENDING to RUNNING: {running_time:.1f}s")
+                    print_json("Final Container State", container_data)
 
-                break
+                    ip_address = container_data.get("ip_address")
+                    if ip_address:
+                        print_info(f"Health endpoint: http://{ip_address}:8080/health")
+                        print_info(f"API endpoint: http://{ip_address}:8080")
+
+                    break
 
             elif status == "FAILED":
                 print_error(f"Container failed to start")
@@ -548,7 +647,7 @@ def main():
                 # Wait and collect logs for 90 seconds
                 print_info("Collecting logs for 90 seconds...")
                 start_time = time.time()
-                log_duration = 90
+                log_duration = 300
                 last_timestamp = None
                 all_messages = []
 

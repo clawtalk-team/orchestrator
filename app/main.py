@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from botocore.exceptions import ClientError, EndpointConnectionError
@@ -12,7 +13,13 @@ from app.middleware.auth import APIKeyMiddleware
 from app.routes import config, containers, health
 from app.services.dynamodb import ensure_table_exists
 
-logging.basicConfig(level=logging.INFO)
+# force=True overrides Lambda's pre-installed root handler so our messages
+# actually appear in CloudWatch instead of being silently dropped.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    force=True,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -98,6 +105,23 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error"},
     )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = (time.monotonic() - start) * 1000
+    user_id = getattr(request.state, "user_id", "-")
+    logger.info(
+        "%s %s %s user=%s %.0fms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        user_id,
+        duration_ms,
+    )
+    return response
 
 
 app.add_middleware(APIKeyMiddleware)

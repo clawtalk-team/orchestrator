@@ -166,32 +166,35 @@ class UserConfigService:
         """
         Get system-wide configuration.
 
+        Values are resolved in priority order:
+          1. Application settings / environment variables (deployment-time config is authoritative)
+          2. DynamoDB system config record (SYSTEM / CONFIG#defaults)
+
+        Env vars win over DynamoDB so that stale database values from local testing
+        cannot override correctly-configured deployment environment variables.
+
         Returns:
             Dict containing system config (URLs, defaults, etc.)
         """
+        from app.config import get_settings
+
+        settings = get_settings()
+
         response = self.table.get_item(Key={"pk": "SYSTEM", "sk": "CONFIG#defaults"})
+        item = response.get("Item", {})
 
-        if "Item" not in response:
-            # Return defaults if not found
-            from app.config import get_settings
-
-            settings = get_settings()
-            return {
-                "auth_gateway_url": settings.auth_gateway_url
-                or "http://localhost:8001",
-                "openclaw_url": "http://localhost:18789",
-                "voice_gateway_url": "ws://localhost:9090",
-            }
-
-        item = response["Item"]
         config = {
-            "auth_gateway_url": item.get("auth_gateway_url"),
-            "openclaw_url": item.get("openclaw_url"),
-            "openclaw_token": item.get("openclaw_token"),
-            "voice_gateway_url": item.get("voice_gateway_url"),
-            "updated_at": item.get("updated_at"),  # Include timestamp to avoid redundant read
+            # Explicit env var wins over DynamoDB; DynamoDB wins over settings default.
+            # This prevents stale DynamoDB values (e.g. from local testing) from overriding
+            # the correctly-configured env vars in a production deployment.
+            "auth_gateway_url": os.environ.get("AUTH_GATEWAY_URL") or item.get("auth_gateway_url") or settings.auth_gateway_url,
+            "openclaw_url": os.environ.get("OPENCLAW_URL") or item.get("openclaw_url") or settings.openclaw_url,
+            "openclaw_token": os.environ.get("OPENCLAW_GATEWAY_TOKEN") or item.get("openclaw_token"),
+            "voice_gateway_url": os.environ.get("VOICE_GATEWAY_URL") or item.get("voice_gateway_url") or settings.voice_gateway_url,
+            "updated_at": item.get("updated_at"),
         }
-        # Convert any Decimal values to int/float
+        # Strip keys that are still None so callers get a clean dict
+        config = {k: v for k, v in config.items() if v is not None}
         return _convert_decimals(config)
 
     def save_system_config(self, config: Dict[str, Any]) -> None:

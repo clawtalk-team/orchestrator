@@ -29,6 +29,7 @@ def create_container(
     user_id: str,
     api_key: str,
     config_name: str = "default",
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> Container:
     """
     Create a new ECS container for a user.
@@ -40,6 +41,7 @@ def create_container(
         user_id: The user ID
         api_key: The API key for auth-gateway (from Authorization header)
         config_name: Named configuration to use (default: "default")
+        env_vars: Additional environment variables to pass to the container
 
     Returns:
         Container record in PENDING status.
@@ -48,6 +50,8 @@ def create_container(
     settings = get_settings()
     container_id = _generate_container_id()
     now = datetime.now(timezone.utc)
+
+    logger.info("create_container start: container=%s user=%s config=%s", container_id, user_id, config_name)
 
     # 1. Get or create user config with defaults
     config_service = UserConfigService()
@@ -68,6 +72,7 @@ def create_container(
         config=user_config,
         overwrite=False,  # Merge with existing
     )
+    logger.info("create_container config saved: container=%s config=%s", container_id, config_name)
 
     # 3. Create Container record in PENDING status
     container = Container(
@@ -82,6 +87,7 @@ def create_container(
 
     # Save to DynamoDB
     dynamodb.create_container(container)
+    logger.info("create_container db record created: container=%s status=PENDING", container_id)
 
     # 4. Start ECS task asynchronously
     try:
@@ -96,6 +102,13 @@ def create_container(
             {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
 
+        # Add user-provided environment variables, deduplicating by key
+        if env_vars:
+            env_dict = {e["name"]: e["value"] for e in environment}
+            env_dict.update(env_vars)
+            environment = [{"name": k, "value": v} for k, v in env_dict.items()]
+            logger.info(f"Added {len(env_vars)} custom env vars to container {container_id}")
+
         overrides = {
             "containerOverrides": [
                 {"name": settings.ecs_container_name, "environment": environment}
@@ -108,6 +121,12 @@ def create_container(
             sg.strip() for sg in settings.ecs_security_groups.split(",") if sg.strip()
         ]
 
+        logger.info(
+            "create_container launching ECS task: container=%s cluster=%s task_def=%s",
+            container_id,
+            settings.ecs_cluster_name,
+            settings.ecs_task_definition,
+        )
         response = ecs.run_task(
             cluster=settings.ecs_cluster_name,
             taskDefinition=settings.ecs_task_definition,
@@ -126,18 +145,39 @@ def create_container(
             ],
         )
 
+        failures = response.get("failures", [])
+        if failures:
+            logger.error(
+                "create_container ECS failures: container=%s failures=%s",
+                container_id,
+                failures,
+            )
+
         if response.get("tasks"):
             task_arn = response["tasks"][0]["taskArn"]
             container.task_arn = task_arn
             container.updated_at = datetime.now(timezone.utc)
             dynamodb.update_container(container)
+            logger.info(
+                "create_container ECS task launched: container=%s task_arn=%s",
+                container_id,
+                task_arn,
+            )
+        else:
+            logger.error(
+                "create_container ECS returned no tasks: container=%s response=%s",
+                container_id,
+                response,
+            )
     except Exception as e:
         # If task creation fails, mark container as FAILED
+        logger.exception("create_container ECS error: container=%s error=%s", container_id, e)
         container.status = "FAILED"
         container.updated_at = datetime.now(timezone.utc)
         dynamodb.update_container(container)
         raise
 
+    logger.info("create_container complete: container=%s task_arn=%s", container_id, container.task_arn)
     return container
 
 
@@ -274,16 +314,32 @@ def handle_task_event(event: Dict[str, Any]) -> None:
             container.ip_address = endpoints["ip_address"]
             container.health_endpoint = endpoints["health_endpoint"]
             container.api_endpoint = endpoints["api_endpoint"]
-            logger.info(f"Extracted endpoints: {endpoints}")
+            logger.info("handle_task_event IP extracted: container=%s ip=%s", container_id, endpoints["ip_address"])
+        else:
+            logger.warning(
+                "handle_task_event no IP in RUNNING event: container=%s task=%s — "
+                "container will have no ip_address in DynamoDB",
+                container_id,
+                task_arn,
+            )
 
         container.status = "RUNNING"
         container.health_status = "STARTING"
         container.updated_at = datetime.now(timezone.utc)
         dynamodb.update_container(container)
-        logger.info(f"Updated container to RUNNING: {container_id}")
+        logger.info("handle_task_event container RUNNING: container=%s ip=%s", container_id, container.ip_address)
 
     elif status in ("STOPPED", "STOPPING", "DEPROVISIONING"):
+        stop_code = detail.get("stopCode")
+        stop_reason = detail.get("stoppedReason")
+        logger.info(
+            "handle_task_event container stopped: container=%s status=%s code=%s reason=%s",
+            container_id,
+            status,
+            stop_code,
+            stop_reason,
+        )
         container.status = "STOPPED"
         container.updated_at = datetime.now(timezone.utc)
         dynamodb.update_container(container)
-        logger.info(f"Updated container to STOPPED: {container_id}")
+        logger.info("handle_task_event db updated STOPPED: container=%s", container_id)

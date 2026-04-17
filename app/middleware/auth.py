@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 
 import httpx
@@ -8,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.services import dynamodb as db
+
+logger = logging.getLogger(__name__)
 
 # Global httpx client for auth-gateway requests (reused across requests)
 _auth_client = None
@@ -72,6 +75,11 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             )
 
             if response.status_code != 200:
+                logger.warning(
+                    "auth rejected: status=%s path=%s",
+                    response.status_code,
+                    request.url.path,
+                )
                 return JSONResponse({"detail": "Invalid API key"}, status_code=401)
 
             # Extract user_id from auth-gateway response
@@ -79,21 +87,27 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             user_id = auth_data.get("user_id")
 
             if not user_id:
+                logger.error("auth-gateway returned 200 but no user_id: %s", auth_data)
                 return JSONResponse(
                     {"detail": "Invalid auth response"}, status_code=500
                 )
+
+            logger.info("auth ok: user=%s path=%s", user_id, request.url.path)
 
             # Store in request state
             request.state.user_id = user_id
             request.state.api_key = api_key
 
         except httpx.TimeoutException:
+            logger.error("auth-gateway timeout: path=%s", request.url.path)
             return JSONResponse({"detail": "Auth service timeout"}, status_code=503)
         except httpx.RequestError as e:
+            logger.error("auth-gateway request error: %s path=%s", e, request.url.path)
             return JSONResponse(
                 {"detail": f"Auth service error: {str(e)}"}, status_code=503
             )
         except Exception as e:
+            logger.exception("unexpected auth error: path=%s", request.url.path)
             return JSONResponse({"detail": "Authentication failed"}, status_code=500)
 
         return await call_next(request)

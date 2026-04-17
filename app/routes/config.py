@@ -151,6 +151,7 @@ async def create_user_config(
 @router.get(
     "/system",
     response_model=SystemConfigResponse,
+    response_model_exclude_none=True,
     summary="Get system configuration",
     response_description="System configuration",
     responses={403: {"description": "Admin access required"}}
@@ -218,10 +219,12 @@ async def get_user_config(
         # Return merged config with system values (required for containers)
         system_config = config_service.get_system_config()
 
-        # Merge: user config overrides system config for shared fields
+        # User config provides user-specific fields (API keys, LLM provider, etc.)
+        # System config always wins for system-level parameters (URLs, tokens) —
+        # stale values in user config must not override the live system config.
         config_data = {
+            **user_config_data,
             **system_config,
-            **user_config_data
         }
     else:
         # Return only user config

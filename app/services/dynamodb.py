@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 from decimal import Decimal
@@ -8,6 +9,8 @@ import boto3
 
 from app.config import get_settings
 from app.models.container import Container, HealthData
+
+logger = logging.getLogger(__name__)
 
 
 def _get_dynamodb():
@@ -144,6 +147,7 @@ def create_container(container: Container) -> Container:
     table = _get_table()
     item = _serialize_container(container)
     table.put_item(Item=item)
+    logger.info("db create_container: container=%s user=%s", container.container_id, container.user_id)
     return container
 
 
@@ -194,6 +198,12 @@ def update_container(container: Container) -> Container:
     table = _get_table()
     item = _serialize_container(container)
     table.put_item(Item=item)
+    logger.info(
+        "db update_container: container=%s status=%s health=%s",
+        container.container_id,
+        container.status,
+        container.health_status,
+    )
     return container
 
 
