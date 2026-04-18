@@ -100,11 +100,11 @@ def cmd_list(args) -> int:
     headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "IP Address", "Started At"]
     print(tabulate(rows, headers=headers, tablefmt="grid"))
 
-    running = ecs.list_tasks(cluster=cluster, desiredStatus="RUNNING")
-    stopped = ecs.list_tasks(cluster=cluster, desiredStatus="STOPPED")
+    running_count = sum(1 for t in tasks if t.get("desiredStatus") == "RUNNING")
+    stopped_count = sum(1 for t in tasks if t.get("desiredStatus") == "STOPPED")
     print(f"\n==> Task count by status:")
-    print(f"  RUNNING: {len(running.get('taskArns', []))}")
-    print(f"  STOPPED: {len(stopped.get('taskArns', []))}")
+    print(f"  RUNNING: {running_count}")
+    print(f"  STOPPED: {stopped_count}")
     return 0
 
 
@@ -172,6 +172,7 @@ def cmd_stop_all(args) -> int:
 
     stopped_count = 0
     db_deleted_count = 0
+    db_eligible_count = 0
 
     for task in tasks:
         task_arn = task["taskArn"]
@@ -179,6 +180,10 @@ def cmd_stop_all(args) -> int:
         tags = {t["key"]: t["value"] for t in task.get("tags", [])}
         container_id = tags.get("container_id")
         user_id = tags.get("user_id")
+        has_db_record = bool(container_id and user_id)
+
+        if has_db_record:
+            db_eligible_count += 1
 
         print(f"Task: {task_id}")
         print(f"  Container ID: {container_id or 'N/A'}")
@@ -187,7 +192,7 @@ def cmd_stop_all(args) -> int:
 
         if args.dry_run:
             print(f"  [DRY RUN] Would stop this task")
-            if args.cleanup_db and container_id and user_id:
+            if args.cleanup_db and has_db_record:
                 print(f"  [DRY RUN] Would delete DynamoDB record")
         else:
             if _stop_task(ecs, cluster, task_arn, "Manually stopped via ecs_tasks.py stop-all"):
@@ -196,7 +201,7 @@ def cmd_stop_all(args) -> int:
             else:
                 print(f"  Failed to stop task")
 
-            if args.cleanup_db and container_id and user_id:
+            if args.cleanup_db and has_db_record:
                 if _delete_container_record(dynamodb, table, user_id, container_id):
                     print(f"  Deleted DynamoDB record")
                     db_deleted_count += 1
@@ -208,10 +213,7 @@ def cmd_stop_all(args) -> int:
     if args.dry_run:
         print(f"[DRY RUN] Would stop {len(tasks)} task(s)")
         if args.cleanup_db:
-            valid = sum(1 for t in tasks if
-                        {x["key"]: x["value"] for x in t.get("tags", [])}.get("container_id") and
-                        {x["key"]: x["value"] for x in t.get("tags", [])}.get("user_id"))
-            print(f"[DRY RUN] Would delete {valid} DynamoDB record(s)")
+            print(f"[DRY RUN] Would delete {db_eligible_count} DynamoDB record(s)")
     else:
         print(f"Stopped {stopped_count}/{len(tasks)} task(s)")
         if args.cleanup_db:
@@ -382,7 +384,11 @@ def main():
         "stop-all": cmd_stop_all,
         "cleanup": cmd_cleanup,
     }
-    sys.exit(dispatch[args.command](args))
+    try:
+        sys.exit(dispatch[args.command](args))
+    except Exception as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
