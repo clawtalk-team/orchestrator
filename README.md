@@ -148,10 +148,12 @@ The orchestrator uses a **two-tier configuration system** that separates infrast
 
 ### Configuration Hierarchy
 
+For system-level fields (`auth_gateway_url`, `openclaw_url`, `openclaw_token`, `voice_gateway_url`):
+
 ```
-User Config (highest priority)
+System Config (always wins for system-level fields)
   ↓
-System Config (infrastructure defaults)
+User Config (user-specific fields only: API keys, model preferences)
   ↓
 Hardcoded Defaults (fallback)
 ```
@@ -159,15 +161,30 @@ Hardcoded Defaults (fallback)
 ### How It Works
 
 When a container is created, the orchestrator:
-1. Loads **system config** from DynamoDB (`SYSTEM#CONFIG#defaults`) - infrastructure URLs, shared tokens
-2. Loads **user config** from DynamoDB (`USER#{user_id}#CONFIG#{config_name}`) - API keys, preferences
-3. **Merges** them with user values overriding system values
-4. Passes the merged config to the container as environment variables
+1. Saves the user's auth key into their user config in DynamoDB
+2. Creates a DynamoDB record for the container in `PENDING` status
+3. Launches an ECS Fargate task with a small set of bootstrap environment variables (see below)
+
+At startup, the container's entrypoint (`fetch_config.py`) reads config directly from DynamoDB, builds `~/.openclaw/openclaw.json` and `~/.clawtalk/clawtalk.json`, then starts `openclaw-agent`.
 
 This ensures:
-- Admins can update infrastructure URLs globally
+- Admins can update infrastructure URLs globally without recreating containers
 - Users maintain their own API keys and preferences
-- No config duplication across users
+- The config files on disk always reflect the state of DynamoDB at container start time
+
+### ECS Container Environment Variables
+
+These five variables are injected into the ECS task at creation time (`app/services/ecs.py`):
+
+| Variable | Value | Description |
+|---|---|---|
+| `API_KEY` | From `Authorization` header | User's auth-gateway API key |
+| `CONTAINER_ID` | Generated UUID | Identifies this container |
+| `CONFIG_NAME` | Request param (default: `default`) | Which named config to load from DynamoDB |
+| `ORCHESTRATOR_URL` | `settings.orchestrator_url` | URL of this orchestrator service |
+| `OPENCLAW_DISABLE_BONJOUR` | `1` | Disables mDNS/Bonjour discovery |
+
+Callers can also supply additional `env_vars` when creating a container, but the four keys `API_KEY`, `CONTAINER_ID`, `CONFIG_NAME`, and `ORCHESTRATOR_URL` are **protected** and cannot be overridden by user-supplied values.
 
 ### System Configuration (Admin-managed)
 
@@ -291,6 +308,38 @@ table.put_item(Item={
 - `GET /config/system` - Get system configuration (admin only)
 - `PUT /config/system` - Update system configuration (admin only)
 
+#### `GET /config/{config_name}?merged=true` response fields
+
+The default (`merged=true`) response combines the user config with system config. System-level fields always overwrite any user-supplied values for the same keys.
+
+**From user config** (`USER#{user_id}/CONFIG#{config_name}` in DynamoDB):
+
+| Field | Description |
+|---|---|
+| `config_name` | Name of this configuration |
+| `user_id` | Owner |
+| `llm_provider` | LLM provider: `anthropic`, `openai`, or `openrouter` |
+| `openclaw_model` | Model name passed to OpenClaw |
+| `anthropic_api_key` | Anthropic API key |
+| `openai_api_key` | OpenAI API key |
+| `openrouter_api_key` | OpenRouter API key |
+| `auth_gateway_api_key` | Auth gateway API key (injected at container creation time) |
+| `max_containers` | Maximum containers this user may run |
+| `created_at` / `updated_at` | ISO 8601 timestamps |
+
+**From system config** (`SYSTEM/CONFIG#defaults` in DynamoDB) — these fields always win:
+
+| Field | Description |
+|---|---|
+| `auth_gateway_url` | URL of the auth gateway |
+| `openclaw_url` | URL of the OpenClaw gateway |
+| `openclaw_token` | Shared OpenClaw auth token |
+| `voice_gateway_url` | URL of the voice gateway |
+
+Both models use `extra="allow"`, so any additional fields stored in DynamoDB are passed through in the response.
+
+Use `?merged=false` to retrieve only the raw user config without system fields.
+
 See the [API Documentation](./docs/CONFIG_API.md) for detailed endpoint specs.
 
 ### Named Configurations
@@ -313,42 +362,46 @@ curl -X POST .../containers \
 
 ### How Configs Are Merged
 
-When building container configs, the system merges system and user values:
+When `GET /config/{config_name}?merged=true` is called (the default), the orchestrator applies `{**user_config, **system_config}` — system config keys always overwrite matching user config keys:
 
 **Example:**
 
 ```python
-# System Config (from DynamoDB SYSTEM#CONFIG#defaults)
-system_config = {
-    "auth_gateway_url": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
-    "openclaw_url": "http://localhost:18789",
-    "openclaw_token": "test-token-123"
-}
-
-# User Config (from DynamoDB USER#{user_id}#CONFIG#default)
+# User Config (from DynamoDB USER#{user_id}/CONFIG#default)
 user_config = {
     "llm_provider": "anthropic",
     "anthropic_api_key": "sk-ant-...",
     "openclaw_model": "claude-3-haiku-20240307",
-    "auth_gateway_api_key": "b13b7bb9..."
+    "auth_gateway_api_key": "b13b7bb9...",
+    # Stale value a user may have set previously — will be overwritten:
+    "openclaw_url": "http://old-host:18789",
 }
 
-# Final Merged Config (passed to container)
-final_config = {
-    # System provides infrastructure
+# System Config (from DynamoDB SYSTEM/CONFIG#defaults)
+system_config = {
     "auth_gateway_url": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
-    "openclaw_url": "http://localhost:18789",
+    "openclaw_url": "http://localhost:18789",  # wins over user's stale value
     "openclaw_token": "test-token-123",
+    "voice_gateway_url": "ws://localhost:9090",
+}
 
-    # User provides secrets and preferences
+# Merged result returned by GET /config/{config_name}
+merged = {
+    # User-specific fields (system config has no opinion on these)
     "llm_provider": "anthropic",
     "anthropic_api_key": "sk-ant-...",
     "openclaw_model": "claude-3-haiku-20240307",
-    "auth_gateway_api_key": "b13b7bb9..."
+    "auth_gateway_api_key": "b13b7bb9...",
+
+    # System fields — always from system config, stale user value discarded
+    "auth_gateway_url": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
+    "openclaw_url": "http://localhost:18789",
+    "openclaw_token": "test-token-123",
+    "voice_gateway_url": "ws://localhost:9090",
 }
 ```
 
-**Key principle:** User values always override system values when both define the same field.
+**Key principle:** System config always wins over user config for system-level fields (`auth_gateway_url`, `openclaw_url`, `openclaw_token`, `voice_gateway_url`). This prevents stale user-config values from overriding live infrastructure config. User-specific fields (API keys, model preferences) are unaffected since they don't exist in the system config.
 
 ## Architecture
 
