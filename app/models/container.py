@@ -40,6 +40,9 @@ class Container(BaseModel):
 
     container_id: str = Field(description="Unique identifier for the container")
     user_id: str = Field(description="User ID that owns this container")
+    agent_id: Optional[str] = Field(
+        default=None, description="Agent ID to run in this container"
+    )
     task_arn: str = Field(description="AWS ECS task ARN")
     status: str = Field(
         default="PENDING",
@@ -91,6 +94,7 @@ class ContainerRequest(BaseModel):
             "example": {
                 "name": "my-agent-container",
                 "config_name": "default",
+                "agent_id": "agent-abc123",
                 "env_vars": {"DEBUG": "true"},
             }
         }
@@ -102,6 +106,7 @@ class ContainerRequest(BaseModel):
     config_name: Optional[str] = Field(
         default="default", description="Named configuration to use (default: 'default')"
     )
+    agent_id: str = Field(description="Agent ID to run in this container")
     env_vars: Optional[Dict[str, str]] = Field(
         default=None,
         description="Additional environment variables to pass to the container (e.g. {'DEBUG': 'true'})",

@@ -84,6 +84,8 @@ def _serialize_container(container: Container) -> dict:
         "updated_at": container.updated_at.isoformat(),
     }
 
+    if container.agent_id:
+        item["agent_id"] = container.agent_id
     if container.ip_address:
         item["ip_address"] = container.ip_address
     if container.health_endpoint:
@@ -130,6 +132,7 @@ def _deserialize_container(item: dict) -> Container:
         user_id=item["user_id"],
         task_arn=item["task_arn"],
         status=item["status"],
+        agent_id=item.get("agent_id"),
         ip_address=item.get("ip_address"),
         port=item.get("port", 8080),
         health_endpoint=item.get("health_endpoint"),

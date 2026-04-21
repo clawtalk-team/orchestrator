@@ -29,6 +29,7 @@ def create_container(
     user_id: str,
     api_key: str,
     config_name: str = "default",
+    agent_id: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
 ) -> Container:
     """
@@ -41,6 +42,7 @@ def create_container(
         user_id: The user ID
         api_key: The API key for auth-gateway (from Authorization header)
         config_name: Named configuration to use (default: "default")
+        agent_id: Optional agent ID to run in the container
         env_vars: Additional environment variables to pass to the container
 
     Returns:
@@ -80,6 +82,7 @@ def create_container(
         user_id=user_id,
         task_arn="",  # Will be updated when task starts
         status="PENDING",
+        agent_id=agent_id,
         health_status="UNKNOWN",
         created_at=now,
         updated_at=now,
@@ -102,10 +105,13 @@ def create_container(
             {"name": "OPENCLAW_DISABLE_BONJOUR", "value": "1"},
         ]
 
+        if agent_id:
+            environment.append({"name": "AGENT_ID", "value": agent_id})
+
         # Add user-provided environment variables, deduplicating by key
         # Protected keys cannot be overridden by user-supplied env vars
         if env_vars:
-            protected_keys = {"API_KEY", "CONTAINER_ID", "CONFIG_NAME", "ORCHESTRATOR_URL"}
+            protected_keys = {"API_KEY", "CONTAINER_ID", "CONFIG_NAME", "ORCHESTRATOR_URL", "AGENT_ID"}
             filtered_vars = {k: v for k, v in env_vars.items() if k not in protected_keys}
             env_dict = {e["name"]: e["value"] for e in environment}
             env_dict.update(filtered_vars)

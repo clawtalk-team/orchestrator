@@ -36,11 +36,12 @@ async def create_container(request: Request, req: ContainerRequest):
     api_key = request.state.api_key
     config_name = req.config_name or "default"
 
-    logger.info("create_container: user=%s config=%s", user_id, config_name)
+    logger.info("create_container: user=%s config=%s agent_id=%s", user_id, config_name, req.agent_id)
     container = ecs.create_container(
         user_id=user_id,
         api_key=api_key,
         config_name=config_name,
+        agent_id=req.agent_id,
         env_vars=req.env_vars,
     )
     logger.info(
