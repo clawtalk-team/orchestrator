@@ -106,7 +106,7 @@ class ContainerRequest(BaseModel):
     config_name: Optional[str] = Field(
         default="default", description="Named configuration to use (default: 'default')"
     )
-    agent_id: str = Field(description="Agent ID to run in this container")
+    agent_id: str = Field(min_length=1, description="Agent ID to run in this container")
     env_vars: Optional[Dict[str, str]] = Field(
         default=None,
         description="Additional environment variables to pass to the container (e.g. {'DEBUG': 'true'})",

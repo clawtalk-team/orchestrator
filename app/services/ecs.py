@@ -146,7 +146,7 @@ def create_container(
         # Add user-provided environment variables, deduplicating by key
         # Protected keys cannot be overridden by user-supplied env vars
         if env_vars:
-            protected_keys = {"API_KEY", "CONTAINER_ID", "CONFIG_NAME", "ORCHESTRATOR_URL", "AGENT_ID"}
+            protected_keys = {"API_KEY", "CONTAINER_ID", "CONFIG_NAME", "ORCHESTRATOR_URL", "AGENT_ID", "OPENCLAW_DISABLE_BONJOUR"}
             filtered_vars = {k: v for k, v in env_vars.items() if k not in protected_keys}
             env_dict = {e["name"]: e["value"] for e in environment}
             env_dict.update(filtered_vars)
