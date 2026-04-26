@@ -165,6 +165,8 @@ When a container is created, the orchestrator:
 2. Creates a DynamoDB record for the container in `PENDING` status
 3. Launches an ECS Fargate task with a small set of bootstrap environment variables (see below)
 
+> **Note:** `ip_address` is not required at this stage. The field is populated asynchronously via an EventBridge task-state event when the ECS task reaches `RUNNING`, but its absence does not affect container functionality — the container communicates outbound via the orchestrator URL injected at launch time.
+
 At startup, the container's entrypoint (`fetch_config.py`) reads config directly from DynamoDB, builds `~/.openclaw/openclaw.json` and `~/.clawtalk/clawtalk.json`, then starts `openclaw-agent`.
 
 This ensures:

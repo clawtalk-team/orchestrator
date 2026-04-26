@@ -54,7 +54,7 @@ def load_system_defaults(
     auth_gateway_url: str,
     openclaw_url: str,
     openclaw_token: str,
-    voice_gateway_url: str = "ws://localhost:9090",
+    voice_gateway_url: str = "http://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
 ):
     """Load system-wide default configuration."""
     print("\n[System Config] Loading system defaults...")
@@ -269,7 +269,7 @@ def main():
     )
     parser.add_argument(
         "--voice-gateway-url",
-        default="ws://localhost:9090",
+        default="http://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
         help="Voice gateway URL"
     )
 
