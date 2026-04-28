@@ -93,6 +93,47 @@ def add_common(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(*flags, **kwargs)
 
 
+def _has_task_arn(arn: Optional[str]) -> bool:
+    return bool(arn and arn not in ("None", ""))
+
+
+def _fmt_log_ts(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _dynamo_paginate(client_method, **kwargs) -> list:
+    items = []
+    while True:
+        response = client_method(**kwargs)
+        items.extend(response.get("Items", []))
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    return items
+
+
+def _ecs_list_task_arns(ecs_client, **kwargs) -> list:
+    arns = []
+    while True:
+        response = ecs_client.list_tasks(**kwargs)
+        arns.extend(response.get("taskArns", []))
+        if "nextToken" not in response:
+            break
+        kwargs["nextToken"] = response["nextToken"]
+    return arns
+
+
+def _fetch_all_log_events(logs_client, **kwargs) -> list:
+    events = []
+    while True:
+        response = logs_client.filter_log_events(**kwargs)
+        events.extend(response.get("events", []))
+        if "nextToken" not in response:
+            break
+        kwargs["nextToken"] = response["nextToken"]
+    return events
+
+
 # ---------------------------------------------------------------------------
 # containers list
 # ---------------------------------------------------------------------------
@@ -105,34 +146,22 @@ def cmd_containers_list(args) -> int:
 
     print(f"==> Listing containers from DynamoDB table: {table_name}\n")
 
-    items = []
     if args.user_id:
         print(f"Filtering by user: {args.user_id}")
-        query_kwargs = {
-            "TableName": table_name,
-            "KeyConditionExpression": "pk = :pk",
-            "ExpressionAttributeValues": {":pk": {"S": f"USER#{args.user_id}"}},
-        }
-        while True:
-            response = dynamodb.query(**query_kwargs)
-            items.extend(response.get("Items", []))
-            if "LastEvaluatedKey" not in response:
-                break
-            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        container_items = _dynamo_paginate(
+            dynamodb.query,
+            TableName=table_name,
+            KeyConditionExpression="pk = :pk AND begins_with(sk, :sk_prefix)",
+            ExpressionAttributeValues={
+                ":pk": {"S": f"USER#{args.user_id}"},
+                ":sk_prefix": {"S": "CONTAINER#"},
+            },
+        )
     else:
-        scan_kwargs = {"TableName": table_name}
-        while True:
-            response = dynamodb.scan(**scan_kwargs)
-            items.extend(response.get("Items", []))
-            if "LastEvaluatedKey" not in response:
-                break
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-
-    # Filter to CONTAINER items only
-    container_items = [
-        item for item in items
-        if item.get("sk", {}).get("S", "").startswith("CONTAINER#")
-    ]
+        container_items = [
+            item for item in _dynamo_paginate(dynamodb.scan, TableName=table_name)
+            if item.get("sk", {}).get("S", "").startswith("CONTAINER#")
+        ]
 
     if not container_items:
         print("No containers found.")
@@ -278,7 +307,7 @@ def _get_containers_for_delete(
 
     if user_id:
         print(f"==> Fetching containers for user {user_id}...")
-        query_kwargs: dict = {
+        kwargs: dict = {
             "TableName": table_name,
             "KeyConditionExpression": "pk = :pk AND begins_with(sk, :sk_prefix)",
             "ExpressionAttributeValues": {
@@ -287,36 +316,22 @@ def _get_containers_for_delete(
             },
         }
         if status:
-            query_kwargs["FilterExpression"] = "#s = :status"
-            query_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
-            query_kwargs["ExpressionAttributeValues"][":status"] = {"S": status}
-        containers = []
-        while True:
-            response = dynamodb.query(**query_kwargs)
-            for item in response.get("Items", []):
-                containers.append(_parse_container_item(item))
-            if "LastEvaluatedKey" not in response:
-                break
-            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            kwargs["FilterExpression"] = "#s = :status"
+            kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+            kwargs["ExpressionAttributeValues"][":status"] = {"S": status}
+        return [_parse_container_item(item) for item in _dynamo_paginate(dynamodb.query, **kwargs)]
     else:
         print(f"==> Fetching all containers (system-wide)...")
-        scan_kwargs: dict = {"TableName": table_name}
+        kwargs = {"TableName": table_name}
         if status:
-            scan_kwargs["FilterExpression"] = "#s = :status"
-            scan_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
-            scan_kwargs["ExpressionAttributeValues"] = {":status": {"S": status}}
-        containers = []
-        while True:
-            response = dynamodb.scan(**scan_kwargs)
-            for item in response.get("Items", []):
-                sk = item.get("sk", {}).get("S", "")
-                if sk.startswith("CONTAINER#"):
-                    containers.append(_parse_container_item(item))
-            if "LastEvaluatedKey" not in response:
-                break
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-
-    return containers
+            kwargs["FilterExpression"] = "#s = :status"
+            kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+            kwargs["ExpressionAttributeValues"] = {":status": {"S": status}}
+        return [
+            _parse_container_item(item)
+            for item in _dynamo_paginate(dynamodb.scan, **kwargs)
+            if item.get("sk", {}).get("S", "").startswith("CONTAINER#")
+        ]
 
 
 def _parse_container_item(item: dict) -> dict:
@@ -325,19 +340,16 @@ def _parse_container_item(item: dict) -> dict:
         "user_id": item.get("user_id", {}).get("S", ""),
         "status": item.get("status", {}).get("S", ""),
         "task_arn": item.get("task_arn", {}).get("S", ""),
+        "created_at": item.get("created_at", {}).get("S", ""),
         "pk": item.get("pk", {}).get("S", ""),
         "sk": item.get("sk", {}).get("S", ""),
     }
 
 
-def _delete_one_container(container: dict, env: str, profile: str, region: str, cluster: str, dry_run: bool) -> None:
+def _delete_one_container(container: dict, env: str, cluster: str, dry_run: bool, *, ecs, dynamodb) -> None:
     container_id = container["container_id"]
     task_arn = container["task_arn"]
     table_name = resolve_table(env)
-
-    session = make_boto_session(profile, region)
-    ecs = session.client("ecs")
-    dynamodb = session.client("dynamodb")
 
     print(f"\n==> Deleting container: {container_id}")
     print(f"    Status: {container['status']}")
@@ -347,7 +359,7 @@ def _delete_one_container(container: dict, env: str, profile: str, region: str, 
         print("    [DRY RUN - no changes made]")
         return
 
-    if task_arn and task_arn != "None":
+    if _has_task_arn(task_arn):
         try:
             print("    Stopping ECS task...")
             ecs.stop_task(
@@ -356,13 +368,11 @@ def _delete_one_container(container: dict, env: str, profile: str, region: str, 
                 reason=f"Container {container_id} deleted via manage.py",
             )
             print("    ECS task stopped")
-        except ecs.exceptions.ClientException as e:
+        except ClientError as e:
             if "not found" in str(e).lower():
                 print("    Task not found in ECS (may already be stopped)")
             else:
                 print(f"    Error stopping task: {e}")
-        except Exception as e:
-            print(f"    Error stopping task: {e}")
 
     try:
         print("    Deleting DynamoDB record...")
@@ -381,6 +391,10 @@ def cmd_containers_delete(args) -> int:
         return 1
 
     cluster = resolve_cluster(args.env, args.cluster)
+    session = make_boto_session(args.profile, args.region)
+    ecs = session.client("ecs")
+    dynamodb = session.client("dynamodb")
+    table_name = resolve_table(args.env)
     containers_to_delete = []
 
     if args.all or args.status:
@@ -392,10 +406,6 @@ def cmd_containers_delete(args) -> int:
             return 0
 
     elif args.container_ids:
-        session = make_boto_session(args.profile, args.region)
-        dynamodb = session.client("dynamodb")
-        table_name = resolve_table(args.env)
-
         for container_id in args.container_ids:
             response = dynamodb.get_item(
                 TableName=table_name,
@@ -428,7 +438,7 @@ def cmd_containers_delete(args) -> int:
             return 0
 
     for container in containers_to_delete:
-        _delete_one_container(container, args.env, args.profile, args.region, cluster, args.dry_run)
+        _delete_one_container(container, args.env, cluster, args.dry_run, ecs=ecs, dynamodb=dynamodb)
 
     print(f"\n{'=' * 60}")
     if args.dry_run:
@@ -443,8 +453,7 @@ def cmd_containers_delete(args) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _normalize_agent_id(agent_id: str) -> tuple:
-    """Return (container_id, ecs_task_id_or_none)."""
+def _normalize_agent_id(agent_id: str) -> tuple[str, Optional[str]]:
     if agent_id.startswith("oc-"):
         return agent_id, None
     hex_no_dashes = agent_id.replace("-", "")
@@ -454,35 +463,23 @@ def _normalize_agent_id(agent_id: str) -> tuple:
 
 def _find_container_in_db(container_id: str, table_name: str, session: boto3.Session, ecs_task_id: Optional[str]) -> Optional[dict]:
     dynamodb = session.client("dynamodb")
-    scan_kwargs: dict = {
-        "TableName": table_name,
-        "FilterExpression": "sk = :sk",
-        "ExpressionAttributeValues": {":sk": {"S": f"CONTAINER#{container_id}"}},
-    }
-    items = []
-    while True:
-        response = dynamodb.scan(**scan_kwargs)
-        items.extend(response.get("Items", []))
-        if "LastEvaluatedKey" not in response:
-            break
-        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
+    items = _dynamo_paginate(
+        dynamodb.scan,
+        TableName=table_name,
+        FilterExpression="sk = :sk",
+        ExpressionAttributeValues={":sk": {"S": f"CONTAINER#{container_id}"}},
+    )
     if items:
         return items[0]
 
     if ecs_task_id:
-        scan_kwargs = {
-            "TableName": table_name,
-            "FilterExpression": "contains(task_arn, :task_id)",
-            "ExpressionAttributeValues": {":task_id": {"S": ecs_task_id}},
-        }
-        items = []
-        while True:
-            response = dynamodb.scan(**scan_kwargs)
-            items.extend(response.get("Items", []))
-            if "LastEvaluatedKey" not in response:
-                break
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        items = _dynamo_paginate(
+            dynamodb.scan,
+            TableName=table_name,
+            FilterExpression="contains(task_arn, :task_id)",
+            ExpressionAttributeValues={":task_id": {"S": ecs_task_id}},
+        )
         if items:
             return items[0]
 
@@ -519,7 +516,7 @@ def _inspect_dynamodb(item: dict) -> dict:
 
 def _inspect_ecs_task(task_arn: str, cluster: str, session: boto3.Session) -> None:
     _print_section("ECS Task Status")
-    if not task_arn or task_arn in ("None", ""):
+    if not _has_task_arn(task_arn):
         print("  No task ARN — ECS task was never created or ARN was not stored.")
         return
 
@@ -584,8 +581,7 @@ def _inspect_lambda_invocations(env: str, created_at: Optional[str], session: bo
         else:
             print(f"  Invocations near creation time ({created_at}):")
             for event in events:
-                ts = datetime.fromtimestamp(event["timestamp"] / 1000)
-                print(f"  {ts.strftime('%Y-%m-%d %H:%M:%S')}  {event['message'].rstrip()}")
+                print(f"  {_fmt_log_ts(event['timestamp'])}  {event['message'].rstrip()}")
     except logs.exceptions.ResourceNotFoundException:
         print(f"  Log group not found: {log_group}")
     except Exception as e:
@@ -594,7 +590,7 @@ def _inspect_lambda_invocations(env: str, created_at: Optional[str], session: bo
 
 def _inspect_logs(task_arn: str, env: str, session: boto3.Session, since_minutes: int) -> None:
     _print_section(f"CloudWatch Logs (last {since_minutes} minutes)")
-    if not task_arn or task_arn in ("None", ""):
+    if not _has_task_arn(task_arn):
         print("  No task ARN — cannot fetch logs.")
         return
 
@@ -604,18 +600,13 @@ def _inspect_logs(task_arn: str, env: str, session: boto3.Session, since_minutes
     start_time = int((datetime.now() - timedelta(minutes=since_minutes)).timestamp() * 1000)
 
     try:
-        kwargs: dict = {
-            "logGroupName": log_group, "startTime": start_time,
-            "filterPattern": task_id, "limit": 200,
-        }
-        all_events = []
-        while True:
-            response = logs.filter_log_events(**kwargs)
-            all_events.extend(response.get("events", []))
-            if "nextToken" in response:
-                kwargs["nextToken"] = response["nextToken"]
-            else:
-                break
+        all_events = _fetch_all_log_events(
+            logs,
+            logGroupName=log_group,
+            startTime=start_time,
+            filterPattern=task_id,
+            limit=200,
+        )
 
         if not all_events:
             print(f"  No logs found for task {task_id} in the last {since_minutes} minutes.")
@@ -624,8 +615,7 @@ def _inspect_logs(task_arn: str, env: str, session: boto3.Session, since_minutes
         print(f"  Log group: {log_group}")
         print(f"  Task ID:   {task_id}\n")
         for event in all_events:
-            ts = datetime.fromtimestamp(event["timestamp"] / 1000)
-            print(f"  {ts.strftime('%Y-%m-%d %H:%M:%S')}  {event['message'].rstrip()}")
+            print(f"  {_fmt_log_ts(event['timestamp'])}  {event['message'].rstrip()}")
 
     except logs.exceptions.ResourceNotFoundException:
         print(f"  Log group not found: {log_group}")
@@ -694,7 +684,7 @@ def _get_task_arn_from_db(container_id: str, user_id: str, env: str, profile: st
         print(f"Error: Could not find task ARN for container {container_id}")
         sys.exit(1)
     task_arn = item["task_arn"]["S"]
-    if not task_arn or task_arn == "None":
+    if not _has_task_arn(task_arn):
         print(f"Error: No task ARN set for container {container_id}")
         sys.exit(1)
     return task_arn
@@ -721,8 +711,10 @@ def cmd_containers_logs(args) -> int:
 
     try:
         kwargs: dict = {
-            "logGroupName": log_group, "startTime": start_time,
-            "filterPattern": task_id, "limit": 100,
+            "logGroupName": log_group,
+            "startTime": start_time,
+            "filterPattern": task_id,
+            "limit": 100,
         }
 
         if args.follow:
@@ -731,38 +723,31 @@ def cmd_containers_logs(args) -> int:
             try:
                 while True:
                     kwargs["startTime"] = last_timestamp
+                    saw_events = False
                     while True:
                         response = logs.filter_log_events(**kwargs)
                         for event in response.get("events", []):
-                            ts = datetime.fromtimestamp(event["timestamp"] / 1000)
-                            print(f"{ts.strftime('%Y-%m-%d %H:%M:%S')} {event['message'].rstrip()}")
+                            print(f"{_fmt_log_ts(event['timestamp'])} {event['message'].rstrip()}")
                             last_timestamp = max(last_timestamp, event["timestamp"] + 1)
+                            saw_events = True
                         if "nextToken" in response:
                             kwargs["nextToken"] = response["nextToken"]
                         else:
                             break
                     kwargs.pop("nextToken", None)
-                    if not response.get("events"):
+                    if not saw_events:
                         time.sleep(2)
             except KeyboardInterrupt:
                 print("\n==> Stopped following logs")
         else:
-            all_events = []
-            while True:
-                response = logs.filter_log_events(**kwargs)
-                all_events.extend(response.get("events", []))
-                if "nextToken" in response:
-                    kwargs["nextToken"] = response["nextToken"]
-                else:
-                    break
+            all_events = _fetch_all_log_events(logs, **kwargs)
 
             if not all_events:
                 print(f"No logs found for task {task_id} in the last {args.since} minutes")
                 return 0
 
             for event in all_events:
-                ts = datetime.fromtimestamp(event["timestamp"] / 1000)
-                print(f"{ts.strftime('%Y-%m-%d %H:%M:%S')} {event['message'].rstrip()}")
+                print(f"{_fmt_log_ts(event['timestamp'])} {event['message'].rstrip()}")
 
             print(f"\n==> Showing logs from last {args.since} minutes")
             print("==> To follow logs in real-time, use --follow")
@@ -829,14 +814,7 @@ def cmd_ecs_list(args) -> int:
 
     print(f"==> Listing ECS tasks in cluster: {cluster}\n")
 
-    task_arns = []
-    kwargs: dict = {"cluster": cluster}
-    while True:
-        response = ecs.list_tasks(**kwargs)
-        task_arns.extend(response.get("taskArns", []))
-        if "nextToken" not in response:
-            break
-        kwargs["nextToken"] = response["nextToken"]
+    task_arns = _ecs_list_task_arns(ecs, cluster=cluster)
 
     if not task_arns:
         print("No tasks found in cluster.")
@@ -893,14 +871,7 @@ def cmd_ecs_stop_all(args) -> int:
     print(f"Dry Run:          {args.dry_run}")
     print("-" * 60)
 
-    task_arns = []
-    kwargs: dict = {"cluster": cluster, "desiredStatus": "RUNNING"}
-    while True:
-        resp = ecs.list_tasks(**kwargs)
-        task_arns.extend(resp.get("taskArns", []))
-        if "nextToken" not in resp:
-            break
-        kwargs["nextToken"] = resp["nextToken"]
+    task_arns = _ecs_list_task_arns(ecs, cluster=cluster, desiredStatus="RUNNING")
 
     if not task_arns:
         print("No running tasks found.")
@@ -975,33 +946,22 @@ def cmd_ecs_stop_all(args) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get_containers_by_status(dynamodb, table: str, status: str) -> list:
+def _get_containers_by_status(dynamodb, table: str, *statuses: str) -> list:
+    if len(statuses) == 1:
+        filter_expr = "#s = :s0"
+        expr_values = {":s0": {"S": statuses[0]}}
+    else:
+        placeholders = ", ".join(f":s{i}" for i in range(len(statuses)))
+        filter_expr = f"#s IN ({placeholders})"
+        expr_values = {f":s{i}": {"S": s} for i, s in enumerate(statuses)}
+
     kwargs: dict = {
         "TableName": table,
-        "FilterExpression": "#s = :status AND begins_with(sk, :sk_prefix)",
+        "FilterExpression": f"{filter_expr} AND begins_with(sk, :sk_prefix)",
         "ExpressionAttributeNames": {"#s": "status"},
-        "ExpressionAttributeValues": {
-            ":status": {"S": status},
-            ":sk_prefix": {"S": "CONTAINER#"},
-        },
+        "ExpressionAttributeValues": {**expr_values, ":sk_prefix": {"S": "CONTAINER#"}},
     }
-    items = []
-    while True:
-        resp = dynamodb.scan(**kwargs)
-        for item in resp.get("Items", []):
-            items.append({
-                "container_id": item.get("container_id", {}).get("S", ""),
-                "user_id": item.get("user_id", {}).get("S", ""),
-                "task_arn": item.get("task_arn", {}).get("S", ""),
-                "status": item.get("status", {}).get("S", ""),
-                "pk": item.get("pk", {}).get("S", ""),
-                "sk": item.get("sk", {}).get("S", ""),
-                "created_at": item.get("created_at", {}).get("S", ""),
-            })
-        if "LastEvaluatedKey" not in resp:
-            break
-        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-    return items
+    return [_parse_container_item(item) for item in _dynamo_paginate(dynamodb.scan, **kwargs)]
 
 
 def cmd_ecs_cleanup(args) -> int:
@@ -1015,12 +975,12 @@ def cmd_ecs_cleanup(args) -> int:
     print(f"    Table:   {table}")
     print(f"    Cluster: {cluster}\n")
 
-    pending = _get_containers_by_status(dynamodb, table, "PENDING")
-    print(f"Found {len(pending)} PENDING containers")
-    failed = _get_containers_by_status(dynamodb, table, "FAILED")
-    print(f"Found {len(failed)} FAILED containers")
+    all_containers = _get_containers_by_status(dynamodb, table, "PENDING", "FAILED")
+    pending = sum(1 for c in all_containers if c["status"] == "PENDING")
+    failed = sum(1 for c in all_containers if c["status"] == "FAILED")
+    print(f"Found {pending} PENDING containers")
+    print(f"Found {failed} FAILED containers")
 
-    all_containers = pending + failed
     if not all_containers:
         print("\nNo pending or failed containers found.")
         return 0
@@ -1043,7 +1003,7 @@ def cmd_ecs_cleanup(args) -> int:
                 print(f"  [DRY RUN] Would stop ECS task: {c['task_arn']}")
             print(f"  [DRY RUN] Would delete DynamoDB record")
         else:
-            if c["task_arn"]:
+            if _has_task_arn(c["task_arn"]):
                 try:
                     ecs.stop_task(cluster=cluster, task=c["task_arn"], reason="Cleanup: removing pending/failed tasks")
                     print(f"  Stopped ECS task")
@@ -1228,11 +1188,12 @@ def cmd_config_setup_test(args) -> int:
     print(f"Endpoint: {args.endpoint}")
     print(f"User ID:  {args.user_id}\n")
 
-    llm_provider = "anthropic"
-    if args.openrouter_key:
-        llm_provider = "openrouter"
+    if args.anthropic_key:
+        llm_provider = "anthropic"
     elif args.openai_key:
         llm_provider = "openai"
+    else:
+        llm_provider = "openrouter"
 
     print("[1/2] Creating system config...")
     system_config = {
@@ -1243,7 +1204,7 @@ def cmd_config_setup_test(args) -> int:
         "openclaw_url": "http://localhost:18789",
         "openclaw_token": "test-token-123",
         "voice_gateway_url": "ws://localhost:9090",
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     table.put_item(Item=system_config)
     print("  System config created")
@@ -1256,8 +1217,8 @@ def cmd_config_setup_test(args) -> int:
         "user_id": args.user_id,
         "llm_provider": llm_provider,
         "openclaw_model": "claude-3-haiku-20240307",
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     for key, val in [
         ("anthropic_api_key", args.anthropic_key),
@@ -1293,11 +1254,11 @@ def cmd_verify(args) -> int:
     print(f"{'=' * 80}")
 
     results = []
+    session = make_boto_session(args.profile, args.region)
 
     # AWS credentials
     print(f"\nChecking: AWS Credentials")
     try:
-        session = make_boto_session(args.profile, args.region)
         sts = session.client("sts")
         identity = sts.get_caller_identity()
         print(f"  OK — Account: {identity['Account']}, ARN: {identity['Arn']}")
@@ -1334,7 +1295,6 @@ def cmd_verify(args) -> int:
     table_name = os.getenv("CONTAINERS_TABLE", "openclaw-containers")
     print(f"\nChecking: DynamoDB Table ({table_name})")
     try:
-        session = make_boto_session(args.profile, args.region)
         dynamodb = session.client("dynamodb")
         resp = dynamodb.describe_table(TableName=table_name)
         table_info = resp["Table"]
@@ -1348,7 +1308,6 @@ def cmd_verify(args) -> int:
     cluster_name = os.getenv("ECS_CLUSTER_NAME", "clawtalk-dev")
     print(f"\nChecking: ECS Cluster ({cluster_name})")
     try:
-        session = make_boto_session(args.profile, args.region)
         ecs = session.client("ecs")
         resp = ecs.describe_clusters(clusters=[cluster_name])
         clusters = resp.get("clusters", [])
