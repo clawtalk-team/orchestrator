@@ -158,10 +158,12 @@ def cmd_containers_list(args) -> int:
             },
         )
     else:
-        container_items = [
-            item for item in _dynamo_paginate(dynamodb.scan, TableName=table_name)
-            if item.get("sk", {}).get("S", "").startswith("CONTAINER#")
-        ]
+        container_items = _dynamo_paginate(
+            dynamodb.scan,
+            TableName=table_name,
+            FilterExpression="begins_with(sk, :sk_prefix)",
+            ExpressionAttributeValues={":sk_prefix": {"S": "CONTAINER#"}},
+        )
 
     if not container_items:
         print("No containers found.")
@@ -597,7 +599,7 @@ def _inspect_logs(task_arn: str, env: str, session: boto3.Session, since_minutes
     task_id = task_arn.split("/")[-1]
     log_group = f"/ecs/openclaw-agent-{env}"
     logs = session.client("logs")
-    start_time = int((datetime.now() - timedelta(minutes=since_minutes)).timestamp() * 1000)
+    start_time = int((time.time() - since_minutes * 60) * 1000)
 
     try:
         all_events = _fetch_all_log_events(
@@ -707,7 +709,7 @@ def cmd_containers_logs(args) -> int:
     print(f"==> Fetching logs from {log_group}")
     print(f"    Task ID: {task_id}\n")
 
-    start_time = int((datetime.now() - timedelta(minutes=args.since)).timestamp() * 1000)
+    start_time = int((time.time() - args.since * 60) * 1000)
 
     try:
         kwargs: dict = {
@@ -1007,8 +1009,11 @@ def cmd_ecs_cleanup(args) -> int:
                 try:
                     ecs.stop_task(cluster=cluster, task=c["task_arn"], reason="Cleanup: removing pending/failed tasks")
                     print(f"  Stopped ECS task")
-                except ecs.exceptions.InvalidParameterException:
-                    print(f"  ECS task not found or already stopped")
+                except ClientError as e:
+                    if "not found" in str(e).lower() or "stopped" in str(e).lower():
+                        print(f"  ECS task not found or already stopped")
+                    else:
+                        print(f"  Error stopping ECS task: {e}")
                 except Exception as e:
                     print(f"  Error stopping ECS task: {e}")
 
