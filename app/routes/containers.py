@@ -2,6 +2,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.models.container import (ContainerHealthResponse, ContainerRequest,
@@ -116,9 +117,11 @@ async def get_container(request: Request, container_id: str):
         logger.warning("get_container: not found user=%s container=%s", user_id, container_id)
         raise HTTPException(status_code=404, detail="Container not found")
 
-    # For k8s containers, sync live pod status on every GET
+    # For k8s containers, sync live pod status on every GET.
+    # sync_pod_status does blocking network I/O via the k8s SDK, so run it in a
+    # thread to avoid blocking the event loop.
     if container.backend == "k8s" and container.status in ("PENDING", "RUNNING"):
-        container = k8s.sync_pod_status(user_id=user_id, container_id=container_id) or container
+        container = await run_in_threadpool(k8s.sync_pod_status, user_id=user_id, container_id=container_id) or container
 
     return container.to_response()
 

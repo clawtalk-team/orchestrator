@@ -112,9 +112,14 @@ def test_create_container_protected_env_vars(aws_mocks):
         )
 
     pod_body = mock_api.create_namespaced_pod.call_args[1]["body"]
-    env_map = {e.name: e.value for e in pod_body.spec.containers[0].env}
-    assert env_map["API_KEY"] == "real-token"  # protected — not overridden
-    assert env_map["CUSTOM_VAR"] == "allowed"  # custom var passed through
+    env_vars = pod_body.spec.containers[0].env
+    plain_map = {e.name: e.value for e in env_vars}
+    secret_ref_names = {e.name for e in env_vars if e.value_from is not None}
+
+    # API_KEY must come from the Secret, not as a plain value
+    assert "API_KEY" in secret_ref_names, "API_KEY must be injected via secretKeyRef"
+    assert plain_map.get("API_KEY") is None  # no plain-text leak
+    assert plain_map["CUSTOM_VAR"] == "allowed"  # custom var passed through
 
 
 def test_create_container_api_failure(aws_mocks):

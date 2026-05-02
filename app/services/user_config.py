@@ -227,6 +227,26 @@ class UserConfigService:
 
         self.table.put_item(Item=item)
 
+    def ensure_container_defaults(
+        self,
+        user_id: str,
+        config_name: str,
+        api_key: str,
+    ) -> None:
+        """Ensure a user config record exists with default LLM settings and the
+        current API key.  Called by both ECS and k8s backends before launching a
+        container so the container can fetch its config from the orchestrator.
+        """
+        from app.constants import DEFAULT_LLM_PROVIDER, DEFAULT_OPENCLAW_MODEL
+
+        user_config = self.get_user_config(user_id, config_name) or {}
+        if "llm_provider" not in user_config:
+            user_config["llm_provider"] = DEFAULT_LLM_PROVIDER
+        if "openclaw_model" not in user_config:
+            user_config["openclaw_model"] = DEFAULT_OPENCLAW_MODEL
+        user_config["auth_gateway_api_key"] = api_key
+        self.save_user_config(user_id=user_id, config_name=config_name, config=user_config, overwrite=False)
+
     def build_openclaw_config(
         self, user_id: str, config_name: str = "default"
     ) -> Dict[str, Any]:
