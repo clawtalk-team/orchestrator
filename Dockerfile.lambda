@@ -1,7 +1,22 @@
+# ── Stage 1: fetch Tailscale static binaries ──────────────────────────────────
+# Alpine has wget + tar; the Lambda base image does not.
+FROM alpine:3.19 AS tailscale
+ARG TAILSCALE_VERSION=1.72.0
+RUN wget -qO /tmp/tailscale.tgz \
+      "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_arm64.tgz" \
+    && tar -xz -C /tmp -f /tmp/tailscale.tgz \
+    && install -m 755 "/tmp/tailscale_${TAILSCALE_VERSION}_arm64/tailscale"  /usr/local/bin/tailscale \
+    && install -m 755 "/tmp/tailscale_${TAILSCALE_VERSION}_arm64/tailscaled" /usr/local/bin/tailscaled
+
+# ── Stage 2: Lambda image ──────────────────────────────────────────────────────
 FROM public.ecr.aws/lambda/python:3.11-arm64
 
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
+
+# Copy Tailscale binaries from the download stage
+COPY --from=tailscale /usr/local/bin/tailscale  /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 
 # Install dependencies
 COPY requirements.txt ${LAMBDA_TASK_ROOT}/
@@ -11,8 +26,15 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY app/ ${LAMBDA_TASK_ROOT}/app/
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
+# Copy Tailscale entrypoint wrapper
+COPY scripts/lambda-entrypoint.sh /lambda-entrypoint-wrapper.sh
+RUN chmod +x /lambda-entrypoint-wrapper.sh
+
 # Fix permissions
 RUN chmod -R 755 ${LAMBDA_TASK_ROOT}
 
-# Set handler
+# Wrap the standard Lambda entrypoint with our Tailscale bootstrap.
+# The wrapper starts tailscaled, connects to the tailnet, then execs
+# /lambda-entrypoint.sh which starts the Python Lambda runtime.
+ENTRYPOINT ["/lambda-entrypoint-wrapper.sh"]
 CMD ["lambda_handler.handler"]

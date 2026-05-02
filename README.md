@@ -405,6 +405,34 @@ merged = {
 
 **Key principle:** System config always wins over user config for system-level fields (`auth_gateway_url`, `openclaw_url`, `openclaw_token`, `voice_gateway_url`). This prevents stale user-config values from overriding live infrastructure config. User-specific fields (API keys, model preferences) are unaffected since they don't exist in the system config.
 
+## Networking — Tailscale
+
+The Lambda container can join a [Tailscale](https://tailscale.com) tailnet on cold-start, giving it outbound access to private services (e.g. an internal OpenClaw gateway or auth service) without a VPN or VPC peering.
+
+Tailscale runs in **userspace-networking** mode (`--tun=userspace-networking`) so no kernel TUN module is required — it works inside Lambda containers out of the box.
+
+### How it works
+
+1. On container start, `scripts/lambda-entrypoint.sh` runs before the Lambda runtime.
+2. It fetches a Tailscale auth key from SSM Parameter Store.
+3. It starts `tailscaled` in the background and calls `tailscale up`.
+4. The Lambda runtime then starts; every outbound call it makes can reach Tailscale nodes.
+
+Lambda execution environments are recycled automatically — because the auth key is `ephemeral=true`, the Tailscale node is cleaned up from the device list when the environment is torn down.
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `TAILSCALE_AUTH_KEY_SSM_PATH` | Yes (prod) | SSM SecureString path — output by `infrastructure/tailscale.tf` |
+| `TAILSCALE_AUTH_KEY` | Dev only | Literal auth key; overrides SSM lookup |
+
+If neither variable is set the Lambda starts normally without connecting to Tailscale.
+
+### Setup
+
+See [docs/DEPLOYMENT.md#tailscale-setup](./docs/DEPLOYMENT.md#tailscale-setup) for full one-time setup and Terraform instructions.
+
 ## Architecture
 
 Built with:
@@ -414,6 +442,7 @@ Built with:
 - **DynamoDB** - Container metadata and configuration storage
 - **ECS Fargate** - Container runtime
 - **CloudWatch Logs** - Logging
+- **Tailscale** - Outbound private network connectivity (userspace, optional)
 
 See [docs/IMPLEMENTATION_SUMMARY.md](./docs/IMPLEMENTATION_SUMMARY.md) for implementation details.
 
