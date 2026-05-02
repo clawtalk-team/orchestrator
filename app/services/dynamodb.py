@@ -80,6 +80,7 @@ def _serialize_container(container: Container) -> dict:
         "status": container.status,
         "port": container.port,
         "health_status": container.health_status,
+        "backend": container.backend,
         "created_at": container.created_at.isoformat(),
         "updated_at": container.updated_at.isoformat(),
     }
@@ -138,6 +139,7 @@ def _deserialize_container(item: dict) -> Container:
         health_endpoint=item.get("health_endpoint"),
         api_endpoint=item.get("api_endpoint"),
         health_status=item.get("health_status", "UNKNOWN"),
+        backend=item.get("backend", "ecs"),
         last_health_check=last_health_check,
         health_data=health_data,
         created_at=datetime.fromisoformat(item["created_at"]),

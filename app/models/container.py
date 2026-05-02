@@ -43,7 +43,11 @@ class Container(BaseModel):
     agent_id: Optional[str] = Field(
         default=None, description="Agent ID to run in this container"
     )
-    task_arn: str = Field(description="AWS ECS task ARN")
+    task_arn: str = Field(description="ECS task ARN or Kubernetes pod name")
+    backend: str = Field(
+        default="ecs",
+        description="Compute backend that owns this container: 'ecs' or 'k8s'",
+    )
     status: str = Field(
         default="PENDING",
         description="Container lifecycle status: PENDING, RUNNING, STOPPED, FAILED",
@@ -81,6 +85,7 @@ class Container(BaseModel):
             status=self.status,
             ip_address=self.ip_address,
             health_status=self.health_status,
+            backend=self.backend,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -111,6 +116,10 @@ class ContainerRequest(BaseModel):
         default=None,
         description="Additional environment variables to pass to the container (e.g. {'DEBUG': 'true'})",
     )
+    backend: Optional[str] = Field(
+        default=None,
+        description="Compute backend: 'ecs' or 'k8s'. Defaults to server's default_backend setting.",
+    )
 
 
 class ContainerResponse(BaseModel):
@@ -132,7 +141,7 @@ class ContainerResponse(BaseModel):
 
     container_id: str = Field(description="Unique identifier for the container")
     task_arn: Optional[str] = Field(
-        default=None, description="AWS ECS task ARN (available after task creation)"
+        default=None, description="ECS task ARN or Kubernetes pod name (available after creation)"
     )
     status: str = Field(
         description="Current container status: PENDING, RUNNING, STOPPED, FAILED"
@@ -142,6 +151,10 @@ class ContainerResponse(BaseModel):
     )
     health_status: str = Field(
         description="Health check status: HEALTHY, UNHEALTHY, UNREACHABLE, STARTING, UNKNOWN"
+    )
+    backend: str = Field(
+        default="ecs",
+        description="Compute backend: 'ecs' or 'k8s'",
     )
     created_at: datetime = Field(description="Timestamp when container was created")
     updated_at: datetime = Field(

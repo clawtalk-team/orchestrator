@@ -8,3 +8,4 @@ httpx>=0.24.0
 python-jose>=3.3.0
 cryptography>=40.0.0
 mangum>=0.17.0
+kubernetes>=29.0.0

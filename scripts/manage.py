@@ -8,14 +8,18 @@ Usage:
 Groups and commands:
   containers list       List containers from DynamoDB
   containers launch     Launch a new container via the orchestrator API
-  containers delete     Delete one or more containers (stops ECS task + removes DB record)
-  containers inspect    Inspect container/agent status (DynamoDB + ECS + logs)
-  containers logs       Fetch CloudWatch logs for a container
+  containers delete     Delete one or more containers (stops task/pod + removes DB record)
+  containers inspect    Inspect container/agent status (DynamoDB + ECS or k8s + logs)
+  containers logs       Fetch logs for a container (CloudWatch for ECS; kubectl for k8s)
   containers exec       Open an interactive shell on a running container
 
   ecs list              List all ECS tasks in the cluster
   ecs stop-all          Stop all running ECS tasks
   ecs cleanup           Remove PENDING and FAILED tasks from ECS and DynamoDB
+
+  k8s list              List pods in the k8s namespace
+  k8s stop-all          Delete all running pods in the namespace
+  k8s cleanup           Remove PENDING and FAILED containers from k8s and DynamoDB
 
   config load           Load system or user defaults into DynamoDB
   config setup-test     Bootstrap local test config in DynamoDB
@@ -28,6 +32,11 @@ Common options (most commands):
   --region REGION       AWS region (default: ap-southeast-2)
   --cluster CLUSTER     ECS cluster name (default: clawtalk-{env})
 
+K8s options (containers logs/exec/inspect and k8s commands):
+  --kubeconfig PATH     Path to kubeconfig (default: ~/.kube/k3d-local.yaml)
+  --k8s-context NAME    Kubernetes context (default: k3d-local)
+  --namespace NS        Kubernetes namespace (default: openclaw)
+
 Examples:
   manage.py containers list
   manage.py containers list --env prod --user-id abc123
@@ -36,10 +45,14 @@ Examples:
   manage.py containers delete --all --status STOPPED
   manage.py containers inspect oc-abc123 --logs
   manage.py containers logs oc-abc123 --user-id USER --follow
+  manage.py containers logs oc-abc123 --user-id USER --follow --kubeconfig ~/.kube/k3d-local.yaml
   manage.py containers exec oc-abc123 --user-id USER
   manage.py ecs list
   manage.py ecs stop-all --dry-run
   manage.py ecs cleanup --dry-run
+  manage.py k8s list
+  manage.py k8s stop-all --dry-run
+  manage.py k8s cleanup --dry-run
   manage.py config load --system --auth-gateway-url https://...
   manage.py config load --user-id abc123 --anthropic-api-key sk-ant-...
   manage.py config setup-test --user-id test-user --anthropic-key sk-ant-...
@@ -93,6 +106,18 @@ def add_common(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(*flags, **kwargs)
 
 
+K8S_ARGS = [
+    (["--kubeconfig"], {"default": None, "metavar": "PATH", "help": "Path to kubeconfig (default: ~/.kube/k3d-local.yaml)"}),
+    (["--k8s-context"],  {"default": None, "dest": "k8s_context", "metavar": "CTX",  "help": "Kubernetes context (default: k3d-local)"}),
+    (["--namespace"],   {"default": None, "metavar": "NS",   "help": "Kubernetes namespace (default: openclaw)"}),
+]
+
+
+def add_k8s_args(parser: argparse.ArgumentParser) -> None:
+    for flags, kwargs in K8S_ARGS:
+        parser.add_argument(*flags, **kwargs)
+
+
 def _has_task_arn(arn: Optional[str]) -> bool:
     return bool(arn and arn not in ("None", ""))
 
@@ -132,6 +157,28 @@ def _fetch_all_log_events(logs_client, **kwargs) -> list:
             break
         kwargs["nextToken"] = response["nextToken"]
     return events
+
+
+def _resolve_k8s_args(args) -> tuple[str, str, str]:
+    """Return (kubeconfig, context, namespace) from args with defaults."""
+    import os
+    kubeconfig = getattr(args, "kubeconfig", None) or os.path.expanduser("~/.kube/k3d-local.yaml")
+    context    = getattr(args, "k8s_context",  None) or "k3d-local"
+    namespace  = getattr(args, "namespace",    None) or "openclaw"
+    return kubeconfig, context, namespace
+
+
+def _kubectl(kubeconfig: str, context: str, namespace: str, *extra_args) -> tuple[str, str, int]:
+    """Run kubectl and return (stdout, stderr, returncode)."""
+    cmd = [
+        "kubectl",
+        f"--kubeconfig={kubeconfig}",
+        f"--context={context}",
+        f"--namespace={namespace}",
+        *extra_args,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.stdout, result.stderr, result.returncode
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +225,14 @@ def cmd_containers_list(args) -> int:
         ip = item.get("ip_address", {}).get("S", "")
         created = item.get("created_at", {}).get("S", "")
         health = item.get("health_status", {}).get("S", "")
+        backend = item.get("backend", {}).get("S", "ecs")
         table_data.append([
-            container_id, user, status, health, ip,
+            container_id, user, status, health, ip, backend,
             task_arn.split("/")[-1] if task_arn else "",
             created,
         ])
 
-    headers = ["Container ID", "User ID", "Status", "Health", "IP Address", "Task ID", "Created At"]
+    headers = ["Container ID", "User ID", "Status", "Health", "IP Address", "Backend", "Task/Pod ID", "Created At"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
     print(f"\nTotal containers: {len(container_items)}")
     return 0
@@ -342,39 +390,63 @@ def _parse_container_item(item: dict) -> dict:
         "user_id": item.get("user_id", {}).get("S", ""),
         "status": item.get("status", {}).get("S", ""),
         "task_arn": item.get("task_arn", {}).get("S", ""),
+        "backend": item.get("backend", {}).get("S", "ecs"),
         "created_at": item.get("created_at", {}).get("S", ""),
         "pk": item.get("pk", {}).get("S", ""),
         "sk": item.get("sk", {}).get("S", ""),
     }
 
 
-def _delete_one_container(container: dict, env: str, cluster: str, dry_run: bool, *, ecs, dynamodb) -> None:
+def _delete_one_container(
+    container: dict,
+    env: str,
+    cluster: str,
+    dry_run: bool,
+    *,
+    ecs,
+    dynamodb,
+    kubeconfig: str = "",
+    k8s_context: str = "",
+    namespace: str = "openclaw",
+) -> None:
     container_id = container["container_id"]
     task_arn = container["task_arn"]
+    backend = container.get("backend", "ecs")
     table_name = resolve_table(env)
 
-    print(f"\n==> Deleting container: {container_id}")
+    print(f"\n==> Deleting container: {container_id}  (backend={backend})")
     print(f"    Status: {container['status']}")
-    print(f"    Task ARN: {task_arn}")
+    print(f"    Task/Pod: {task_arn}")
 
     if dry_run:
         print("    [DRY RUN - no changes made]")
         return
 
-    if _has_task_arn(task_arn):
-        try:
-            print("    Stopping ECS task...")
-            ecs.stop_task(
-                cluster=cluster,
-                task=task_arn,
-                reason=f"Container {container_id} deleted via manage.py",
-            )
-            print("    ECS task stopped")
-        except ClientError as e:
-            if "not found" in str(e).lower():
-                print("    Task not found in ECS (may already be stopped)")
+    if backend == "k8s":
+        if _has_task_arn(task_arn):
+            pod_name = task_arn
+            kc = kubeconfig or ""
+            ctx = k8s_context or ""
+            stdout, stderr, rc = _kubectl(kc, ctx, namespace, "delete", "pod", pod_name, "--ignore-not-found")
+            if rc == 0:
+                print(f"    k8s pod deleted")
             else:
-                print(f"    Error stopping task: {e}")
+                print(f"    k8s pod deletion warning: {stderr.strip()}")
+    else:
+        if _has_task_arn(task_arn):
+            try:
+                print("    Stopping ECS task...")
+                ecs.stop_task(
+                    cluster=cluster,
+                    task=task_arn,
+                    reason=f"Container {container_id} deleted via manage.py",
+                )
+                print("    ECS task stopped")
+            except ClientError as e:
+                if "not found" in str(e).lower():
+                    print("    Task not found in ECS (may already be stopped)")
+                else:
+                    print(f"    Error stopping task: {e}")
 
     try:
         print("    Deleting DynamoDB record...")
@@ -439,8 +511,13 @@ def cmd_containers_delete(args) -> int:
             print("Aborted.")
             return 0
 
+    kubeconfig, k8s_context, namespace = _resolve_k8s_args(args)
     for container in containers_to_delete:
-        _delete_one_container(container, args.env, cluster, args.dry_run, ecs=ecs, dynamodb=dynamodb)
+        _delete_one_container(
+            container, args.env, cluster, args.dry_run,
+            ecs=ecs, dynamodb=dynamodb,
+            kubeconfig=kubeconfig, k8s_context=k8s_context, namespace=namespace,
+        )
 
     print(f"\n{'=' * 60}")
     if args.dry_run:
@@ -507,7 +584,8 @@ def _inspect_dynamodb(item: dict) -> dict:
         "Status": get("status"),
         "Health Status": get("health_status"),
         "IP Address": get("ip_address"),
-        "Task ARN": get("task_arn"),
+        "Backend": get("backend") or "ecs",
+        "Task ARN / Pod": get("task_arn"),
         "Created At": get("created_at"),
         "Updated At": get("updated_at"),
     }
@@ -558,6 +636,29 @@ def _inspect_ecs_task(task_arn: str, cluster: str, session: boto3.Session) -> No
         print(f"    Exit Code: {c.get('exitCode', '(n/a)')}")
         if c.get("reason"):
             print(f"    Reason:    {c['reason']}")
+
+
+def _inspect_k8s_pod(pod_name: str, kubeconfig: str, context: str, namespace: str) -> None:
+    _print_section("Kubernetes Pod Status")
+    if not pod_name:
+        print("  No pod name — pod was never created or name was not stored.")
+        return
+
+    stdout, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pod", pod_name, "-o", "wide")
+    if rc != 0:
+        print(f"  Pod not found or kubectl error: {stderr.strip()}")
+        return
+
+    for line in stdout.strip().splitlines():
+        print(f"  {line}")
+
+    stdout2, _, _ = _kubectl(kubeconfig, context, namespace, "describe", "pod", pod_name)
+    status_section = False
+    for line in stdout2.splitlines():
+        if line.startswith("Status:") or line.startswith("Conditions:") or line.startswith("Events:"):
+            status_section = True
+        if status_section:
+            print(f"  {line}")
 
 
 def _inspect_lambda_invocations(env: str, created_at: Optional[str], session: boto3.Session) -> None:
@@ -640,27 +741,43 @@ def cmd_containers_inspect(args) -> int:
     print(f"  Cluster:      {cluster}")
 
     item = _find_container_in_db(container_id, table_name, session, ecs_task_id)
+    kubeconfig, k8s_context, namespace = _resolve_k8s_args(args)
 
     if not item:
         _print_section("DynamoDB Record")
         print(f"  NOT FOUND — container '{container_id}' has no record in '{table_name}'.")
         task_arn_for_logs = None
         created_at = None
+        backend = "ecs"
     else:
         fields = _inspect_dynamodb(item)
-        task_arn_for_logs = fields.get("Task ARN")
+        task_arn_for_logs = fields.get("Task ARN / Pod")
         created_at = fields.get("Created At")
-        _inspect_ecs_task(task_arn_for_logs, cluster, session)
+        backend = fields.get("Backend", "ecs")
+        if backend == "k8s":
+            _inspect_k8s_pod(task_arn_for_logs or "", kubeconfig, k8s_context, namespace)
+        else:
+            _inspect_ecs_task(task_arn_for_logs, cluster, session)
 
-    _inspect_lambda_invocations(args.env, created_at, session)
+    if backend != "k8s":
+        _inspect_lambda_invocations(args.env, created_at, session)
 
     if args.logs and task_arn_for_logs:
-        _inspect_logs(task_arn_for_logs, args.env, session, since_minutes=args.since)
+        if backend == "k8s":
+            _print_section(f"kubectl logs (last {args.since} minutes)")
+            stdout, stderr, rc = _kubectl(kubeconfig, k8s_context, namespace, "logs", task_arn_for_logs, "--timestamps=true")
+            if rc != 0:
+                print(f"  Error fetching logs: {stderr.strip()}")
+            else:
+                for line in stdout.strip().splitlines()[-200:]:
+                    print(f"  {line}")
+        else:
+            _inspect_logs(task_arn_for_logs, args.env, session, since_minutes=args.since)
     elif args.logs:
-        _print_section("CloudWatch Logs")
-        print("  No task ARN available — cannot fetch container logs.")
+        _print_section("Logs")
+        print("  No task/pod reference available — cannot fetch logs.")
     else:
-        print(f"\n  Tip: re-run with --logs to also fetch container CloudWatch logs")
+        print(f"\n  Tip: re-run with --logs to also fetch container logs")
 
     print()
     return 0
@@ -671,45 +788,81 @@ def cmd_containers_inspect(args) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get_task_arn_from_db(container_id: str, user_id: str, env: str, profile: str, region: str) -> str:
+def _get_container_from_db(container_id: str, user_id: str, env: str, profile: str, region: str) -> dict:
+    """Return the parsed container item from DynamoDB, or exit on not-found."""
     table_name = resolve_table(env)
     session = make_boto_session(profile, region)
     dynamodb = session.client("dynamodb")
 
-    print(f"==> Looking up task ARN for container {container_id}...")
     response = dynamodb.get_item(
         TableName=table_name,
         Key={"pk": {"S": f"USER#{user_id}"}, "sk": {"S": f"CONTAINER#{container_id}"}},
     )
     item = response.get("Item")
-    if not item or "task_arn" not in item:
-        print(f"Error: Could not find task ARN for container {container_id}")
+    if not item:
+        print(f"Error: Container {container_id} not found for user {user_id}")
         sys.exit(1)
-    task_arn = item["task_arn"]["S"]
-    if not _has_task_arn(task_arn):
-        print(f"Error: No task ARN set for container {container_id}")
-        sys.exit(1)
-    return task_arn
+    return _parse_container_item(item)
 
 
 def cmd_containers_logs(args) -> int:
+    kubeconfig, k8s_context, namespace = _resolve_k8s_args(args)
+
+    # Determine backend and task/pod reference
     if args.task_id:
-        task_id = args.task_id
-    elif args.container_id and args.user_id:
-        task_arn = _get_task_arn_from_db(args.container_id, args.user_id, args.env, args.profile, args.region)
-        task_id = task_arn.split("/")[-1]
-    else:
+        # Explicit task ID — assume ECS (legacy flag)
+        return _logs_ecs(args.task_id, args.env, args.profile, args.region, args.since, args.follow)
+
+    if not (args.container_id and args.user_id):
         print("Error: Either provide CONTAINER_ID with --user-id, or use --task-id")
         return 1
 
-    log_group = f"/ecs/openclaw-agent-{args.env}"
-    session = make_boto_session(args.profile, args.region)
+    container = _get_container_from_db(args.container_id, args.user_id, args.env, args.profile, args.region)
+    backend = container.get("backend", "ecs")
+    task_arn = container["task_arn"]
+
+    if not _has_task_arn(task_arn):
+        print(f"Error: No task/pod reference for container {args.container_id}")
+        return 1
+
+    if backend == "k8s":
+        return _logs_k8s(task_arn, kubeconfig, k8s_context, namespace, args.follow)
+    else:
+        task_id = task_arn.split("/")[-1]
+        return _logs_ecs(task_id, args.env, args.profile, args.region, args.since, args.follow)
+
+
+def _logs_k8s(pod_name: str, kubeconfig: str, context: str, namespace: str, follow: bool) -> int:
+    """Stream or dump kubectl logs for a pod."""
+    print(f"==> kubectl logs  pod={pod_name}  namespace={namespace}\n")
+    extra = ["--follow"] if follow else []
+    cmd = [
+        "kubectl",
+        f"--kubeconfig={kubeconfig}",
+        f"--context={context}",
+        f"--namespace={namespace}",
+        "logs", pod_name,
+        "--timestamps=true",
+        *extra,
+    ]
+    try:
+        result = subprocess.run(cmd)
+        return result.returncode
+    except KeyboardInterrupt:
+        print("\n==> Stopped following logs")
+        return 0
+
+
+def _logs_ecs(task_id: str, env: str, profile: str, region: str, since: int, follow: bool) -> int:
+    """Fetch or follow CloudWatch logs for an ECS task ID."""
+    log_group = f"/ecs/openclaw-agent-{env}"
+    session = make_boto_session(profile, region)
     logs = session.client("logs")
 
     print(f"==> Fetching logs from {log_group}")
     print(f"    Task ID: {task_id}\n")
 
-    start_time = int((time.time() - args.since * 60) * 1000)
+    start_time = int((time.time() - since * 60) * 1000)
 
     try:
         kwargs: dict = {
@@ -719,7 +872,7 @@ def cmd_containers_logs(args) -> int:
             "limit": 100,
         }
 
-        if args.follow:
+        if follow:
             print("Following logs (Ctrl+C to stop)...")
             last_timestamp = start_time
             try:
@@ -745,13 +898,13 @@ def cmd_containers_logs(args) -> int:
             all_events = _fetch_all_log_events(logs, **kwargs)
 
             if not all_events:
-                print(f"No logs found for task {task_id} in the last {args.since} minutes")
+                print(f"No logs found for task {task_id} in the last {since} minutes")
                 return 0
 
             for event in all_events:
                 print(f"{_fmt_log_ts(event['timestamp'])} {event['message'].rstrip()}")
 
-            print(f"\n==> Showing logs from last {args.since} minutes")
+            print(f"\n==> Showing logs from last {since} minutes")
             print("==> To follow logs in real-time, use --follow")
 
     except logs.exceptions.ResourceNotFoundException:
@@ -767,41 +920,69 @@ def cmd_containers_logs(args) -> int:
 
 
 def cmd_containers_exec(args) -> int:
+    kubeconfig, k8s_context, namespace = _resolve_k8s_args(args)
+    cluster = resolve_cluster(args.env, args.cluster)
+
+    # Resolve backend and task/pod reference
     if args.task_arn:
+        # Explicit task ARN — assume ECS
+        backend = "ecs"
         task_arn = args.task_arn
     elif args.container_id and args.user_id:
-        task_arn = _get_task_arn_from_db(args.container_id, args.user_id, args.env, args.profile, args.region)
+        container = _get_container_from_db(args.container_id, args.user_id, args.env, args.profile, args.region)
+        backend = container.get("backend", "ecs")
+        task_arn = container["task_arn"]
     else:
         print("Error: Either provide CONTAINER_ID with --user-id, or use --task-arn")
         return 1
 
-    cluster = resolve_cluster(args.env, args.cluster)
-    task_id = task_arn.split("/")[-1]
-
-    print(f"==> Connecting to task: {task_id}")
-    print(f"    Cluster: {cluster}")
-    print(f"    Container: {args.container}\n")
-
-    cmd = [
-        "aws", "ecs", "execute-command",
-        "--profile", args.profile,
-        "--region", args.region,
-        "--cluster", cluster,
-        "--task", task_id,
-        "--container", args.container,
-        "--interactive",
-        "--command", args.command,
-    ]
-
-    try:
-        result = subprocess.run(cmd)
-        return result.returncode
-    except FileNotFoundError:
-        print("Error: AWS CLI not found. Please install the AWS CLI.")
+    if not _has_task_arn(task_arn):
+        print(f"Error: No task/pod reference available for this container")
         return 1
-    except KeyboardInterrupt:
-        print("\n==> Session interrupted")
-        return 0
+
+    if backend == "k8s":
+        pod_name = task_arn
+        print(f"==> kubectl exec into pod: {pod_name}  namespace={namespace}")
+        print(f"    Command: {args.command}\n")
+        cmd = [
+            "kubectl",
+            f"--kubeconfig={kubeconfig}",
+            f"--context={k8s_context}",
+            f"--namespace={namespace}",
+            "exec", "-it", pod_name,
+            "--container", args.container,
+            "--", args.command,
+        ]
+        try:
+            result = subprocess.run(cmd)
+            return result.returncode
+        except KeyboardInterrupt:
+            print("\n==> Session interrupted")
+            return 0
+    else:
+        task_id = task_arn.split("/")[-1]
+        print(f"==> Connecting to ECS task: {task_id}")
+        print(f"    Cluster: {cluster}")
+        print(f"    Container: {args.container}\n")
+        cmd = [
+            "aws", "ecs", "execute-command",
+            "--profile", args.profile,
+            "--region", args.region,
+            "--cluster", cluster,
+            "--task", task_id,
+            "--container", args.container,
+            "--interactive",
+            "--command", args.command,
+        ]
+        try:
+            result = subprocess.run(cmd)
+            return result.returncode
+        except FileNotFoundError:
+            print("Error: AWS CLI not found. Please install the AWS CLI.")
+            return 1
+        except KeyboardInterrupt:
+            print("\n==> Session interrupted")
+            return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1029,6 +1210,156 @@ def cmd_ecs_cleanup(args) -> int:
         print(f"DRY RUN COMPLETE — would have cleaned up {len(all_containers)} containers")
     else:
         print(f"CLEANUP COMPLETE — removed {len(all_containers)} containers")
+    print("=" * 60)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# k8s list
+# ---------------------------------------------------------------------------
+
+
+def cmd_k8s_list(args) -> int:
+    kubeconfig, context, namespace = _resolve_k8s_args(args)
+
+    print(f"==> Listing pods in namespace '{namespace}'\n")
+    stdout, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-o", "wide")
+    if rc != 0:
+        print(f"Error: {stderr.strip()}")
+        return rc
+    print(stdout)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# k8s stop-all
+# ---------------------------------------------------------------------------
+
+
+def cmd_k8s_stop_all(args) -> int:
+    kubeconfig, context, namespace = _resolve_k8s_args(args)
+    table_name = resolve_table(args.env)
+    session = make_boto_session(args.profile, args.region)
+    dynamodb_client = session.client("dynamodb")
+
+    print(f"Namespace:        {namespace}")
+    print(f"Cleanup DynamoDB: {args.cleanup_db}")
+    print(f"Dry Run:          {args.dry_run}")
+    print("-" * 60)
+
+    stdout, stderr, rc = _kubectl(
+        kubeconfig, context, namespace,
+        "get", "pods",
+        "-l", "app=openclaw-agent",
+        "-o", "jsonpath={range .items[*]}{.metadata.name}\\n{end}",
+    )
+    if rc != 0:
+        print(f"Error listing pods: {stderr.strip()}")
+        return rc
+
+    pod_names = [p for p in stdout.strip().splitlines() if p]
+    if not pod_names:
+        print("No pods found.")
+        return 0
+
+    print(f"Found {len(pod_names)} pod(s)\n")
+    stopped = 0
+    for pod_name in pod_names:
+        container_id = pod_name  # pod name == container_id
+        print(f"Pod: {pod_name}")
+        if args.dry_run:
+            print(f"  [DRY RUN] Would delete pod")
+            if args.cleanup_db:
+                print(f"  [DRY RUN] Would delete DynamoDB records for container_id={container_id}")
+        else:
+            _, del_err, del_rc = _kubectl(kubeconfig, context, namespace, "delete", "pod", pod_name, "--ignore-not-found")
+            if del_rc == 0:
+                print(f"  Deleted pod")
+                stopped += 1
+            else:
+                print(f"  Error deleting pod: {del_err.strip()}")
+
+            if args.cleanup_db:
+                # Scan for the container record (we don't know user_id here)
+                items = _dynamo_paginate(
+                    dynamodb_client.scan,
+                    TableName=table_name,
+                    FilterExpression="sk = :sk",
+                    ExpressionAttributeValues={":sk": {"S": f"CONTAINER#{container_id}"}},
+                )
+                for item in items:
+                    try:
+                        dynamodb_client.delete_item(
+                            TableName=table_name,
+                            Key={"pk": item["pk"], "sk": item["sk"]},
+                        )
+                        print(f"  Deleted DynamoDB record")
+                    except Exception as e:
+                        print(f"  Failed to delete DynamoDB record: {e}")
+        print()
+
+    print("-" * 60)
+    if args.dry_run:
+        print(f"[DRY RUN] Would stop {len(pod_names)} pod(s)")
+    else:
+        print(f"Stopped {stopped}/{len(pod_names)} pod(s)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# k8s cleanup
+# ---------------------------------------------------------------------------
+
+
+def cmd_k8s_cleanup(args) -> int:
+    kubeconfig, context, namespace = _resolve_k8s_args(args)
+    table_name = resolve_table(args.env)
+    session = make_boto_session(args.profile, args.region)
+    dynamodb_client = session.client("dynamodb")
+
+    print(f"==> Cleaning up PENDING and FAILED k8s containers")
+    print(f"    Namespace: {namespace}")
+    print(f"    Table:     {table_name}\n")
+
+    all_containers = _get_containers_by_status(dynamodb_client, table_name, "PENDING", "FAILED")
+    k8s_containers = [c for c in all_containers if c.get("backend", "ecs") == "k8s"]
+
+    pending = sum(1 for c in k8s_containers if c["status"] == "PENDING")
+    failed  = sum(1 for c in k8s_containers if c["status"] == "FAILED")
+    print(f"Found {pending} PENDING k8s containers")
+    print(f"Found {failed} FAILED k8s containers")
+
+    if not k8s_containers:
+        print("\nNo pending or failed k8s containers found.")
+        return 0
+
+    if args.dry_run:
+        print("DRY RUN — no changes will be made\n")
+
+    for c in k8s_containers:
+        pod_name = c["task_arn"] or c["container_id"]
+        print(f"Container: {c['container_id']}  pod={pod_name}")
+        print(f"  Status:  {c['status']}")
+        if args.dry_run:
+            print(f"  [DRY RUN] Would delete pod and DynamoDB record")
+        else:
+            _kubectl(kubeconfig, context, namespace, "delete", "pod", pod_name, "--ignore-not-found")
+            print(f"  Pod delete requested")
+            try:
+                dynamodb_client.delete_item(
+                    TableName=table_name,
+                    Key={"pk": {"S": c["pk"]}, "sk": {"S": c["sk"]}},
+                )
+                print(f"  Deleted from DynamoDB")
+            except Exception as e:
+                print(f"  Error deleting from DynamoDB: {e}")
+        print()
+
+    print("=" * 60)
+    if args.dry_run:
+        print(f"DRY RUN COMPLETE — would have cleaned up {len(k8s_containers)} k8s containers")
+    else:
+        print(f"CLEANUP COMPLETE — removed {len(k8s_containers)} k8s containers")
     print("=" * 60)
     return 0
 
@@ -1402,10 +1733,11 @@ def build_parser() -> argparse.ArgumentParser:
     # containers delete
     p = c_sub.add_parser(
         "delete",
-        help="Delete one or more containers (stops ECS task and removes DynamoDB record)",
+        help="Delete one or more containers (stops task/pod + removes DynamoDB record)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Delete containers by ID, all for a user, or by status.\n\n"
+            "Delete containers by ID, all for a user, or by status.\n"
+            "Automatically dispatches to ECS stop_task or kubectl delete pod based on the backend.\n\n"
             "Examples:\n"
             "  manage.py containers delete oc-abc123 --user-id USER\n"
             "  manage.py containers delete oc-abc oc-def --user-id USER --dry-run\n"
@@ -1415,6 +1747,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     add_common(p)
+    add_k8s_args(p)
     p.add_argument("container_ids", nargs="*", metavar="CONTAINER_ID",
                    help="One or more container IDs to delete")
     p.add_argument("--user-id", help="User ID who owns the containers")
@@ -1443,9 +1776,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     add_common(p)
+    add_k8s_args(p)
     p.add_argument("agent_id", metavar="AGENT_ID",
                    help="Agent/container ID (UUID or oc- format)")
-    p.add_argument("--logs", action="store_true", help="Fetch CloudWatch logs")
+    p.add_argument("--logs", action="store_true", help="Fetch container logs (CloudWatch for ECS; kubectl for k8s)")
     p.add_argument("--since", type=int, default=60, metavar="MINUTES",
                    help="Search logs from last N minutes (default: 60)")
     p.set_defaults(func=cmd_containers_inspect)
@@ -1453,18 +1787,22 @@ def build_parser() -> argparse.ArgumentParser:
     # containers logs
     p = c_sub.add_parser(
         "logs",
-        help="Fetch CloudWatch logs for a container",
+        help="Fetch logs for a container (CloudWatch for ECS; kubectl for k8s)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Fetch or follow CloudWatch logs for a container.\n\n"
+            "Fetch or follow logs for a container.\n\n"
+            "For ECS containers: fetches from CloudWatch.\n"
+            "For k8s containers: streams via kubectl logs.\n\n"
             "Examples:\n"
             "  manage.py containers logs oc-abc123 --user-id USER\n"
             "  manage.py containers logs oc-abc123 --user-id USER --follow\n"
+            "  manage.py containers logs oc-abc123 --user-id USER --kubeconfig ~/.kube/k3d-local.yaml\n"
             "  manage.py containers logs --task-id abc123def456\n"
             "  manage.py containers logs oc-abc123 --user-id USER --since 60"
         ),
     )
     add_common(p)
+    add_k8s_args(p)
     p.add_argument("container_id", nargs="?", metavar="CONTAINER_ID",
                    help="Container ID (e.g. oc-abc12345)")
     p.add_argument("--user-id", help="User ID who owns the container")
@@ -1472,33 +1810,34 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ECS task ID to fetch logs for (alternative to CONTAINER_ID)")
     p.add_argument("--follow", "-f", action="store_true", help="Follow logs in real-time")
     p.add_argument("--since", type=int, default=30, metavar="MINUTES",
-                   help="Show logs from last N minutes (default: 30)")
+                   help="Show logs from last N minutes (ECS only; default: 30)")
     p.set_defaults(func=cmd_containers_logs)
 
     # containers exec
     p = c_sub.add_parser(
         "exec",
-        help="Open an interactive shell on a running container via ECS exec",
+        help="Open an interactive shell on a running container (ECS exec or kubectl exec)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Open an interactive shell on a running container.\n\n"
-            "Prerequisites:\n"
-            "  - ECS exec must be enabled on the task (enableExecuteCommand: true)\n"
-            "  - AWS Session Manager plugin must be installed\n\n"
+            "For ECS containers: uses aws ecs execute-command (requires Session Manager plugin).\n"
+            "For k8s containers: uses kubectl exec.\n\n"
             "Examples:\n"
             "  manage.py containers exec oc-abc123 --user-id USER\n"
             "  manage.py containers exec --task-arn arn:aws:ecs:...\n"
-            "  manage.py containers exec oc-abc123 --user-id USER --command /bin/sh"
+            "  manage.py containers exec oc-abc123 --user-id USER --command /bin/sh\n"
+            "  manage.py containers exec oc-abc123 --user-id USER --kubeconfig ~/.kube/k3d-local.yaml"
         ),
     )
     add_common(p)
+    add_k8s_args(p)
     p.add_argument("container_id", nargs="?", metavar="CONTAINER_ID",
                    help="Container ID (e.g. oc-abc12345)")
     p.add_argument("--user-id", help="User ID who owns the container")
     p.add_argument("--task-arn", metavar="TASK_ARN",
                    help="Task ARN to connect to (alternative to CONTAINER_ID + --user-id)")
     p.add_argument("--container", default="openclaw-agent", metavar="NAME",
-                   help="Container name within the task (default: openclaw-agent)")
+                   help="Container name within the task/pod (default: openclaw-agent)")
     p.add_argument("--command", default="/bin/bash", metavar="CMD",
                    help="Command to execute (default: /bin/bash)")
     p.set_defaults(func=cmd_containers_exec)
@@ -1535,6 +1874,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true",
                    help="Show what would happen without making changes")
     p.set_defaults(func=cmd_ecs_cleanup)
+
+    # -----------------------------------------------------------------------
+    # k8s
+    # -----------------------------------------------------------------------
+    k = groups.add_parser(
+        "k8s",
+        help="Kubernetes pod management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Manage Kubernetes pods directly.\n\nCommands: list, stop-all, cleanup",
+    )
+    k_sub = k.add_subparsers(dest="command", metavar="COMMAND")
+    k_sub.required = True
+
+    # k8s list
+    p = k_sub.add_parser("list", help="List pods in the openclaw namespace")
+    add_common(p)
+    add_k8s_args(p)
+    p.set_defaults(func=cmd_k8s_list)
+
+    # k8s stop-all
+    p = k_sub.add_parser("stop-all", help="Delete all openclaw-agent pods")
+    add_common(p)
+    add_k8s_args(p)
+    p.add_argument("--cleanup-db", action="store_true",
+                   help="Also delete container records from DynamoDB")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would happen without making changes")
+    p.set_defaults(func=cmd_k8s_stop_all)
+
+    # k8s cleanup
+    p = k_sub.add_parser("cleanup", help="Remove PENDING and FAILED k8s containers from DynamoDB and cluster")
+    add_common(p)
+    add_k8s_args(p)
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would happen without making changes")
+    p.set_defaults(func=cmd_k8s_cleanup)
 
     # -----------------------------------------------------------------------
     # config

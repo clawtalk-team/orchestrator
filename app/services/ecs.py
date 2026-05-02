@@ -8,7 +8,6 @@ import boto3
 import httpx
 
 from app.config import get_settings
-from app.constants import DEFAULT_LLM_PROVIDER, DEFAULT_OPENCLAW_MODEL
 from app.models.container import Container
 from app.services import dynamodb
 from app.services.user_config import UserConfigService
@@ -90,25 +89,9 @@ def create_container(
 
     logger.info("create_container start: container=%s user=%s config=%s", container_id, user_id, config_name)
 
-    # 1. Get or create user config with defaults
+    # 1. Ensure user config exists with defaults and current API key
     config_service = UserConfigService()
-    user_config = config_service.get_user_config(user_id, config_name) or {}
-
-    # Set defaults if not present
-    if "llm_provider" not in user_config:
-        user_config["llm_provider"] = DEFAULT_LLM_PROVIDER
-    if "openclaw_model" not in user_config:
-        user_config["openclaw_model"] = DEFAULT_OPENCLAW_MODEL
-
-    # 2. Store api_key in user config (plaintext for now)
-    user_config["auth_gateway_api_key"] = api_key
-
-    config_service.save_user_config(
-        user_id=user_id,
-        config_name=config_name,
-        config=user_config,
-        overwrite=False,  # Merge with existing
-    )
+    config_service.ensure_container_defaults(user_id=user_id, config_name=config_name, api_key=api_key)
     logger.info("create_container config saved: container=%s config=%s", container_id, config_name)
 
     # 3. Create Container record in PENDING status
