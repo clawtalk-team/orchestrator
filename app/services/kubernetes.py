@@ -207,7 +207,9 @@ def create_container(
 
     # 6. Create Pod
     try:
-        result = api.create_namespaced_pod(namespace=namespace, body=pod)
+        result = api.create_namespaced_pod(
+            namespace=namespace, body=pod, _request_timeout=settings.k8s_api_timeout
+        )
         pod_name = result.metadata.name
         container.task_arn = pod_name
         container.updated_at = datetime.now(timezone.utc)
@@ -234,11 +236,14 @@ def stop_container(user_id: str, container_id: str) -> bool:
         return False
 
     pod_name = container.task_arn or container_id
-    namespace = get_settings().k8s_namespace
+    settings = get_settings()
+    namespace = settings.k8s_namespace
 
     api = _get_k8s_client()
     try:
-        api.delete_namespaced_pod(name=pod_name, namespace=namespace)
+        api.delete_namespaced_pod(
+            name=pod_name, namespace=namespace, _request_timeout=settings.k8s_api_timeout
+        )
         logger.info("k8s pod deleted: container=%s pod=%s", container_id, pod_name)
     except ApiException as exc:
         if exc.status != 404:
@@ -292,7 +297,10 @@ def sync_pod_status(user_id: str, container_id: str) -> Optional[Container]:
     settings = get_settings()
     try:
         api = _get_k8s_client()
-        pod = api.read_namespaced_pod(name=container.task_arn, namespace=settings.k8s_namespace)
+        pod = api.read_namespaced_pod(
+            name=container.task_arn, namespace=settings.k8s_namespace,
+            _request_timeout=settings.k8s_api_timeout,
+        )
         phase = pod.status.phase if pod.status else None
         logger.info("k8s sync_pod_status: container=%s pod=%s phase=%s", container_id, container.task_arn, phase)
 
