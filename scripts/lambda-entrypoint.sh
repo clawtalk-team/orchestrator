@@ -131,7 +131,7 @@ tailscale \
     --hostname="${HOSTNAME}" \
     --accept-routes \
     --accept-dns=false \
-    --timeout=5s \
+    --timeout=10s \
     && echo "[tailscale] connected to tailnet" \
     || echo "[tailscale] WARNING: tailscale up failed — Lambda will start without Tailscale"
 

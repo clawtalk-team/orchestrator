@@ -66,27 +66,13 @@ def test_create_container_authorized(mock_get_auth_client, authenticated_client)
     mock_client.get = AsyncMock(return_value=mock_response)
     mock_get_auth_client.return_value = mock_client
 
-    with patch("app.services.ecs._get_ecs_client") as mock_ecs:
-        mock_ecs.return_value.run_task.return_value = {
-            "tasks": [
-                {
-                    "taskArn": "arn:aws:ecs:us-east-1:123456789:task/test",
-                    "attachments": [
-                        {
-                            "type": "ElasticNetworkInterface",
-                            "details": [
-                                {
-                                    "name": "privateIPv4Address",
-                                    "value": "10.0.1.45",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ]
-        }
+    # Mock the k8s client (default backend is k8s)
+    with patch("app.services.kubernetes._get_k8s_client") as mock_k8s:
+        mock_pod = MagicMock()
+        mock_pod.metadata.name = "oc-test1234"
+        mock_k8s.return_value.create_namespaced_pod.return_value = mock_pod
 
-        with patch("app.services.ecs._update_agent_container"):
+        with patch("app.services.kubernetes._update_agent_container"):
             response = authenticated_client.post(
                 "/containers",
                 json={"name": "test-container", "agent_id": "agent-abc123"},

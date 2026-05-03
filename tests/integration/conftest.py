@@ -53,7 +53,8 @@ def mock_auth_gateway():
 @pytest.fixture(autouse=True)
 def mock_ecs():
     """Mock ECS client for integration tests."""
-    with patch("app.services.ecs._get_ecs_client") as mock_ecs_client:
+    with patch("app.services.ecs._get_ecs_client") as mock_ecs_client, \
+         patch("app.services.ecs._update_agent_container"):
         mock_client = MagicMock()
         mock_client.run_task.return_value = {
             "tasks": [
@@ -76,7 +77,8 @@ def mock_k8s():
     original_client = k8s_service._k8s_core_v1
     k8s_service._k8s_core_v1 = None
 
-    with patch("app.services.kubernetes._get_k8s_client") as mock_get:
+    with patch("app.services.kubernetes._get_k8s_client") as mock_get, \
+         patch("app.services.kubernetes._update_agent_container"):
         mock_api = MagicMock()
 
         # Mock pod creation

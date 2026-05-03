@@ -121,7 +121,7 @@ def test_create_container_protected_env_vars(aws_mocks):
 
 
 def test_create_container_api_failure(aws_mocks):
-    """If the k8s API call fails the container record is marked FAILED."""
+    """If the k8s API call fails with ApiException the container record is marked FAILED."""
     from kubernetes.client.exceptions import ApiException
 
     from app.services import dynamodb
@@ -143,6 +143,74 @@ def test_create_container_api_failure(aws_mocks):
     containers = get_user_containers("user-fail")
     assert len(containers) == 1
     assert containers[0].status == "FAILED"
+
+
+def test_create_container_connection_error_marks_failed(aws_mocks):
+    """If the k8s API call fails with a connection error the container is marked FAILED.
+
+    urllib3.MaxRetryError is not an ApiException; the old code let it escape
+    without updating DynamoDB.  The fix broadens the except to Exception.
+    """
+    import urllib3.exceptions
+
+    with patch("app.services.kubernetes._get_k8s_client") as mock_get:
+        mock_api = MagicMock()
+        mock_api.create_namespaced_pod.side_effect = urllib3.exceptions.MaxRetryError(
+            pool=None, url="/api/v1/namespaces/openclaw/pods"
+        )
+        mock_get.return_value = mock_api
+
+        with pytest.raises(urllib3.exceptions.MaxRetryError):
+            k8s_service.create_container(
+                user_id="user-connfail",
+                api_key="tok",
+                agent_id="agent-abc",
+            )
+
+    from app.services.dynamodb import get_user_containers
+    containers = get_user_containers("user-connfail")
+    assert len(containers) == 1
+    assert containers[0].status == "FAILED"
+
+
+def test_load_kubeconfig_from_ssm_uses_load_kube_config_from_dict(monkeypatch):
+    """_load_kubeconfig_from_ssm must call load_kube_config_from_dict, not
+    load_kube_config(config_dict=...).  The latter is unavailable in some
+    kubernetes-client versions and raises TypeError."""
+    import yaml
+    from kubernetes import config as k8s_config
+
+    sample_kubeconfig = {
+        "apiVersion": "v1",
+        "clusters": [{"cluster": {"server": "https://100.93.150.95:6443"}, "name": "default"}],
+        "contexts": [{"context": {"cluster": "default", "user": "default"}, "name": "default"}],
+        "current-context": "default",
+        "kind": "Config",
+        "users": [{"name": "default", "user": {}}],
+    }
+
+    captured = {}
+
+    def fake_ssm_get(Name, WithDecryption):
+        return {"Parameter": {"Value": yaml.dump(sample_kubeconfig)}}
+
+    def fake_load_from_dict(config_dict, context=None, **kwargs):
+        captured["called"] = True
+        captured["context"] = context
+
+    monkeypatch.setenv("AWS_REGION", "ap-southeast-2")
+
+    with patch("boto3.client") as mock_boto3, \
+         patch.object(k8s_config, "load_kube_config_from_dict", fake_load_from_dict):
+        mock_ssm = MagicMock()
+        mock_ssm.get_parameter.side_effect = fake_ssm_get
+        mock_boto3.return_value = mock_ssm
+
+        result = k8s_service._load_kubeconfig_from_ssm("/test/path", "default")
+
+    assert result is True
+    assert captured.get("called") is True
+    assert captured["context"] == "default"
 
 
 # ── Stop container ────────────────────────────────────────────────────────────

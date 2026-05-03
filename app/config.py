@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     k8s_kubeconfig: Optional[str] = None  # Path to kubeconfig; None = default/in-cluster
     k8s_kubeconfig_ssm_path: Optional[str] = None  # SSM path storing kubeconfig YAML (takes precedence over k8s_kubeconfig)
     k8s_context: Optional[str] = None  # Kubernetes context to use; None = current context
+    k8s_api_timeout: float = 8.0  # Per-call connect+read timeout for kubernetes API requests (seconds)
     default_backend: str = "k8s"  # Compute backend: "ecs" or "k8s"
 
 

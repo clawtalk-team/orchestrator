@@ -55,7 +55,7 @@ def backend(request, mock_k8s):
 def _create_container(client, auth_headers, backend: str, name: str = "test-container"):
     return client.post(
         "/containers",
-        json={"name": name, "backend": backend},
+        json={"name": name, "backend": backend, "agent_id": "agent-integ-test"},
         headers=auth_headers,
     )
 
@@ -136,12 +136,12 @@ def test_get_container_health(client, auth_headers, backend):
     assert "health_status" in data
 
 
-def test_user_isolation(client):
+def test_user_isolation(client, mock_k8s):
     """Users cannot see each other's containers regardless of backend."""
     user1_headers = {"Authorization": "Bearer user1:token1"}
     create_resp = client.post(
         "/containers",
-        json={"name": "user1-container"},
+        json={"name": "user1-container", "agent_id": "agent-isolation-test"},
         headers=user1_headers,
     )
     container_id = create_resp.json()["container_id"]

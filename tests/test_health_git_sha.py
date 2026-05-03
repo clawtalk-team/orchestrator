@@ -5,6 +5,16 @@ from unittest.mock import patch
 
 import pytest
 
+import app.utils
+
+
+@pytest.fixture(autouse=True)
+def clear_git_sha_cache():
+    """Clear the lru_cache on get_git_sha before each test so env-var patches take effect."""
+    app.utils.get_git_sha.cache_clear()
+    yield
+    app.utils.get_git_sha.cache_clear()
+
 
 def test_health_endpoint_with_git_commit(client):
     """Test health endpoint returns git_sha when GIT_COMMIT env var is set."""
