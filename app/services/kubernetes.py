@@ -398,7 +398,10 @@ def create_container(
         updated_at=now,
     )
     dynamodb.create_container(container)
-    dynamodb.register_cluster(name=cluster_name, backend="k8s", namespace=settings.k8s_namespace)
+    try:
+        dynamodb.register_cluster(name=cluster_name, backend="k8s", namespace=settings.k8s_namespace)
+    except Exception as exc:
+        logger.warning("cluster registry update failed, container creation unaffected: cluster=%s error=%s", cluster_name, exc)
     logger.info("k8s create_container db record created: container=%s", container_id)
 
     # 4. Dispatch pod creation asynchronously — does not block this response.

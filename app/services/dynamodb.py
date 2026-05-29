@@ -256,33 +256,30 @@ def get_running_containers() -> List[Container]:
 def register_cluster(name: str, backend: str, namespace: str = "") -> None:
     """Upsert a cluster record under SYSTEM / CLUSTER#<name>.
 
-    Safe to call on every container creation — uses a conditional write so the
-    registered_at timestamp is only set once, and last_seen_at is always updated.
+    Safe to call on every container creation — single update_item with
+    if_not_exists sets registered_at once while always updating last_seen_at,
+    backend, and namespace. No exception handling needed; no double round-trip.
     """
     table = _get_table()
     now = datetime.now(timezone.utc).isoformat()
-    try:
-        # Attempt to create the item (only succeeds on first registration).
-        table.put_item(
-            Item={
-                "pk": "SYSTEM",
-                "sk": f"CLUSTER#{name}",
-                "name": name,
-                "backend": backend,
-                "namespace": namespace,
-                "registered_at": now,
-                "last_seen_at": now,
-            },
-            ConditionExpression="attribute_not_exists(pk)",
-        )
-        logger.info("cluster registered: name=%s backend=%s", name, backend)
-    except table.meta.client.exceptions.ConditionalCheckFailedException:
-        # Already exists — just bump last_seen_at.
-        table.update_item(
-            Key={"pk": "SYSTEM", "sk": f"CLUSTER#{name}"},
-            UpdateExpression="SET last_seen_at = :now",
-            ExpressionAttributeValues={":now": now},
-        )
+    table.update_item(
+        Key={"pk": "SYSTEM", "sk": f"CLUSTER#{name}"},
+        UpdateExpression=(
+            "SET #name = if_not_exists(#name, :name), "
+            "backend = :backend, "
+            "namespace = :namespace, "
+            "registered_at = if_not_exists(registered_at, :now), "
+            "last_seen_at = :now"
+        ),
+        ExpressionAttributeNames={"#name": "name"},
+        ExpressionAttributeValues={
+            ":name": name,
+            ":backend": backend,
+            ":namespace": namespace,
+            ":now": now,
+        },
+    )
+    logger.info("cluster registered: name=%s backend=%s", name, backend)
 
 
 def get_clusters() -> List[Dict[str, Any]]:
