@@ -83,6 +83,7 @@ class Settings(BaseSettings):
 
     # Kubernetes
     k8s_namespace: str = "openclaw"
+    k8s_cluster_name: Optional[str] = None  # Friendly name for the cluster, stored on container records; defaults to k8s_context
     k8s_image: str = "openclaw-agent:latest"
     k8s_image_pull_policy: str = "IfNotPresent"  # Never | IfNotPresent | Always
     k8s_image_pull_secret: Optional[str] = None  # imagePullSecret name for private registries (e.g. ecr-secret)

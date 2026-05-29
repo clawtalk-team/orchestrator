@@ -48,6 +48,10 @@ class Container(BaseModel):
         default="ecs",
         description="Compute backend that owns this container: 'ecs' or 'k8s'",
     )
+    cluster: Optional[str] = Field(
+        default=None,
+        description="Cluster name the container is running on (e.g. k8s context name or ECS cluster name)",
+    )
     status: str = Field(
         default="PENDING",
         description="Container lifecycle status: PENDING, RUNNING, STOPPED, FAILED",
@@ -86,6 +90,7 @@ class Container(BaseModel):
             ip_address=self.ip_address,
             health_status=self.health_status,
             backend=self.backend,
+            cluster=self.cluster,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -156,6 +161,10 @@ class ContainerResponse(BaseModel):
     backend: str = Field(
         default="ecs",
         description="Compute backend: 'ecs' or 'k8s'",
+    )
+    cluster: Optional[str] = Field(
+        default=None,
+        description="Cluster name the container is running on",
     )
     created_at: datetime = Field(description="Timestamp when container was created")
     updated_at: datetime = Field(

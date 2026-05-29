@@ -1,9 +1,9 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import boto3
 
@@ -85,6 +85,8 @@ def _serialize_container(container: Container) -> dict:
         "updated_at": container.updated_at.isoformat(),
     }
 
+    if container.cluster:
+        item["cluster"] = container.cluster
     if container.agent_id:
         item["agent_id"] = container.agent_id
     if container.ip_address:
@@ -140,6 +142,7 @@ def _deserialize_container(item: dict) -> Container:
         api_endpoint=item.get("api_endpoint"),
         health_status=item.get("health_status", "UNKNOWN"),
         backend=item.get("backend", "ecs"),
+        cluster=item.get("cluster"),
         last_health_check=last_health_check,
         health_data=health_data,
         created_at=datetime.fromisoformat(item["created_at"]),
@@ -241,3 +244,64 @@ def get_running_containers() -> List[Container]:
     )
 
     return [_deserialize_container(item) for item in response.get("Items", [])]
+
+
+# ---------------------------------------------------------------------------
+# Cluster registry
+# ---------------------------------------------------------------------------
+# Clusters are stored as SYSTEM / CLUSTER#<name> items. Each record captures
+# when the cluster was first seen and last used so operators can audit which
+# clusters the orchestrator has ever dispatched to.
+
+def register_cluster(name: str, backend: str, namespace: str = "") -> None:
+    """Upsert a cluster record under SYSTEM / CLUSTER#<name>.
+
+    Safe to call on every container creation — uses a conditional write so the
+    registered_at timestamp is only set once, and last_seen_at is always updated.
+    """
+    table = _get_table()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        # Attempt to create the item (only succeeds on first registration).
+        table.put_item(
+            Item={
+                "pk": "SYSTEM",
+                "sk": f"CLUSTER#{name}",
+                "name": name,
+                "backend": backend,
+                "namespace": namespace,
+                "registered_at": now,
+                "last_seen_at": now,
+            },
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+        logger.info("cluster registered: name=%s backend=%s", name, backend)
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        # Already exists — just bump last_seen_at.
+        table.update_item(
+            Key={"pk": "SYSTEM", "sk": f"CLUSTER#{name}"},
+            UpdateExpression="SET last_seen_at = :now",
+            ExpressionAttributeValues={":now": now},
+        )
+
+
+def get_clusters() -> List[Dict[str, Any]]:
+    """Return all registered clusters."""
+    table = _get_table()
+    response = table.query(
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={
+            ":pk": "SYSTEM",
+            ":prefix": "CLUSTER#",
+        },
+    )
+    return [
+        {
+            "name": item["name"],
+            "backend": item["backend"],
+            "namespace": item.get("namespace", ""),
+            "registered_at": item["registered_at"],
+            "last_seen_at": item["last_seen_at"],
+        }
+        for item in response.get("Items", [])
+    ]
