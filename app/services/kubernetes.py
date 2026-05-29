@@ -367,7 +367,8 @@ def create_container(
     container_id = _generate_container_id()
     now = datetime.now(timezone.utc)
 
-    logger.info("k8s create_container: container=%s user=%s config=%s", container_id, user_id, config_name)
+    cluster_name = settings.k8s_cluster_name or settings.k8s_context or "default"
+    logger.info("k8s create_container: container=%s user=%s config=%s cluster=%s", container_id, user_id, config_name, cluster_name)
 
     # 1. Ensure user config exists with defaults and current API key
     config_service = UserConfigService()
@@ -392,10 +393,15 @@ def create_container(
         agent_id=agent_id,
         health_status="UNKNOWN",
         backend="k8s",
+        cluster=cluster_name,
         created_at=now,
         updated_at=now,
     )
     dynamodb.create_container(container)
+    try:
+        dynamodb.register_cluster(name=cluster_name, backend="k8s", namespace=settings.k8s_namespace)
+    except Exception as exc:
+        logger.warning("cluster registry update failed, container creation unaffected: cluster=%s error=%s", cluster_name, exc)
     logger.info("k8s create_container db record created: container=%s", container_id)
 
     # 4. Dispatch pod creation asynchronously — does not block this response.
