@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.middleware.auth import APIKeyMiddleware
-from app.routes import config, containers, health
+from app.routes import clusters, config, containers, health
 from app.services.dynamodb import ensure_table_exists
 
 # force=True overrides Lambda's pre-installed root handler so our messages
@@ -89,6 +89,10 @@ requests can override the default by including `"backend": "k8s"` or `"backend":
             "name": "config",
             "description": "Configuration management for users and system defaults",
         },
+        {
+            "name": "clusters",
+            "description": "Cluster registry — admin-only view of compute clusters the orchestrator has dispatched to",
+        },
     ],
 )
 
@@ -137,6 +141,7 @@ app.add_middleware(APIKeyMiddleware)
 app.include_router(health.router)
 app.include_router(containers.router)
 app.include_router(config.router)
+app.include_router(clusters.router)
 
 
 def custom_openapi():

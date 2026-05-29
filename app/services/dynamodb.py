@@ -282,6 +282,22 @@ def register_cluster(name: str, backend: str, namespace: str = "") -> None:
     logger.info("cluster registered: name=%s backend=%s", name, backend)
 
 
+def get_cluster(name: str) -> Optional[Dict[str, Any]]:
+    """Return a single registered cluster by name, or None if not found."""
+    table = _get_table()
+    response = table.get_item(Key={"pk": "SYSTEM", "sk": f"CLUSTER#{name}"})
+    item = response.get("Item")
+    if not item:
+        return None
+    return {
+        "name": item["name"],
+        "backend": item["backend"],
+        "namespace": item.get("namespace", ""),
+        "registered_at": item["registered_at"],
+        "last_seen_at": item["last_seen_at"],
+    }
+
+
 def get_clusters() -> List[Dict[str, Any]]:
     """Return all registered clusters."""
     table = _get_table()
@@ -302,3 +318,16 @@ def get_clusters() -> List[Dict[str, Any]]:
         }
         for item in response.get("Items", [])
     ]
+
+
+def delete_cluster(name: str) -> bool:
+    """Remove a cluster from the registry. Returns False if it didn't exist."""
+    table = _get_table()
+    try:
+        table.delete_item(
+            Key={"pk": "SYSTEM", "sk": f"CLUSTER#{name}"},
+            ConditionExpression="attribute_exists(pk)",
+        )
+        return True
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        return False
