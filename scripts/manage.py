@@ -180,10 +180,14 @@ def _fetch_kubeconfig_ssm(profile: str, region: str, ssm_path: str) -> str:
     print(f"==> Fetching kubeconfig from SSM: {ssm_path}")
     response = ssm.get_parameter(Name=ssm_path, WithDecryption=True)
     kubeconfig_yaml = response["Parameter"]["Value"]
-    # Use a stable temp path derived from the SSM path so it can be reused within the session
+    # Include UID in filename to avoid conflicts on shared systems; write with 0o600 to
+    # protect sensitive credentials from other local users
     safe_name = ssm_path.replace("/", "_").lstrip("_")
-    tmp_path = os.path.join(tempfile.gettempdir(), f"manage_kube_{safe_name}.yaml")
-    with open(tmp_path, "w") as f:
+    uid = os.getuid() if hasattr(os, "getuid") else "default"
+    tmp_path = os.path.join(tempfile.gettempdir(), f"manage_kube_{uid}_{safe_name}.yaml")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(tmp_path, flags, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(kubeconfig_yaml)
     return tmp_path
 
@@ -1329,25 +1333,27 @@ def cmd_k8s_stop_all(args) -> int:
     if user_id:
         label_sel += f",user_id={user_id}"
 
-    # Use -o name which outputs "pod/<name>" one per line — avoids the jsonpath \n issue
-    stdout, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-l", label_sel, "-o", "name")
+    # Fetch pods as JSON in a single call to get names and labels together.
+    # This avoids a second kubectl round-trip and prevents the fail-open bug where a
+    # failed label lookup would cause all pods (including kept ones) to be deleted.
+    stdout_json, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-l", label_sel, "-o", "json")
     if rc != 0:
         print(f"Error listing pods: {stderr.strip()}")
         return rc
 
-    pod_names = [p.removeprefix("pod/") for p in stdout.strip().splitlines() if p]
+    try:
+        pods_data = json.loads(stdout_json).get("items", []) if stdout_json.strip() else []
+    except json.JSONDecodeError:
+        print("Error: could not parse pod list JSON")
+        return 1
 
-    # --keep-user: fetch each pod's user_id label and exclude that user's pods
-    if keep_user and pod_names:
-        stdout_json, _, _ = _kubectl(kubeconfig, context, namespace, "get", "pods", "-l", label_sel, "-o", "json")
-        try:
-            pod_user_map = {
-                pod["metadata"]["name"]: pod["metadata"].get("labels", {}).get("user_id", "")
-                for pod in json.loads(stdout_json).get("items", [])
-            }
-            pod_names = [p for p in pod_names if pod_user_map.get(p) != keep_user]
-        except (json.JSONDecodeError, KeyError):
-            print("Warning: could not parse pod labels for --keep-user filtering")
+    if keep_user:
+        pod_names = [
+            pod["metadata"]["name"] for pod in pods_data
+            if pod["metadata"].get("labels", {}).get("user_id", "") != keep_user
+        ]
+    else:
+        pod_names = [pod["metadata"]["name"] for pod in pods_data]
 
     if not pod_names:
         print("No pods found.")
