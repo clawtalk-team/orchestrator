@@ -105,6 +105,36 @@ def resolve_table(env: str) -> str:
     return f"openclaw-containers-{env}"
 
 
+def resolve_users_table(env: str) -> str:
+    return f"auth-gateway-users-{env}" if env != "prod" else "auth-gateway-users"
+
+
+def _fetch_user_email_map(dynamodb, env: str) -> dict:
+    """Return a dict mapping user UUID -> email by scanning the auth-gateway-users table.
+
+    The auth-gateway-users table uses pk=USER#<email> and stores a `uuid` attribute.
+    Returns an empty dict on any error so callers degrade gracefully.
+    """
+    table = resolve_users_table(env)
+    try:
+        items = _dynamo_paginate(
+            dynamodb.scan,
+            TableName=table,
+            ProjectionExpression="pk, #u",
+            ExpressionAttributeNames={"#u": "uuid"},
+        )
+        result = {}
+        for item in items:
+            pk = item.get("pk", {}).get("S", "")
+            uuid = item.get("uuid", {}).get("S", "")
+            if pk.startswith("USER#") and uuid:
+                email = pk[len("USER#"):]
+                result[uuid] = email
+        return result
+    except Exception:
+        return {}
+
+
 COMMON_ARGS = [
     (["--env"], {"default": "dev", "metavar": "ENV", "help": "Environment: dev or prod (default: dev)"}),
     (["--profile"], {"default": "personal", "metavar": "PROFILE", "help": "AWS profile name (default: personal)"}),
@@ -278,6 +308,8 @@ def cmd_containers_list(args) -> int:
         print("No containers found.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     table_data = []
     for item in container_items:
         container_id = item.get("sk", {}).get("S", "").replace("CONTAINER#", "")
@@ -289,12 +321,12 @@ def cmd_containers_list(args) -> int:
         health = item.get("health_status", {}).get("S", "")
         backend = item.get("backend", {}).get("S", "ecs")
         table_data.append([
-            container_id, user, status, health, ip, backend,
+            container_id, user, email_map.get(user, ""), status, health, ip, backend,
             task_arn.split("/")[-1] if task_arn else "",
             created,
         ])
 
-    headers = ["Container ID", "User ID", "Status", "Health", "IP Address", "Backend", "Task/Pod ID", "Created At"]
+    headers = ["Container ID", "User ID", "Email", "Status", "Health", "IP Address", "Backend", "Task/Pod ID", "Created At"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
     print(f"\nTotal containers: {len(container_items)}")
     return 0
@@ -634,7 +666,7 @@ def _print_section(title: str) -> None:
     print(f"{'=' * 60}")
 
 
-def _inspect_dynamodb(item: dict) -> dict:
+def _inspect_dynamodb(item: dict, email: str = "") -> dict:
     _print_section("DynamoDB Record")
 
     def get(key):
@@ -644,6 +676,7 @@ def _inspect_dynamodb(item: dict) -> dict:
     fields = {
         "Container ID": get("sk").replace("CONTAINER#", ""),
         "User ID": get("user_id"),
+        "Email": email,
         "Status": get("status"),
         "Health Status": get("health_status"),
         "IP Address": get("ip_address"),
@@ -813,7 +846,10 @@ def cmd_containers_inspect(args) -> int:
         created_at = None
         backend = "ecs"
     else:
-        fields = _inspect_dynamodb(item)
+        dynamodb = session.client("dynamodb")
+        email_map = _fetch_user_email_map(dynamodb, args.env)
+        user_id = item.get("user_id", {}).get("S", "")
+        fields = _inspect_dynamodb(item, email=email_map.get(user_id, ""))
         task_arn_for_logs = fields.get("Task ARN / Pod")
         created_at = fields.get("Created At")
         backend = fields.get("Backend", "ecs")
@@ -1056,6 +1092,7 @@ def cmd_containers_exec(args) -> int:
 def cmd_ecs_list(args) -> int:
     session = make_boto_session(args.profile, args.region)
     ecs = session.client("ecs")
+    dynamodb = session.client("dynamodb")
     cluster = resolve_cluster(args.env, args.cluster)
 
     print(f"==> Listing ECS tasks in cluster: {cluster}\n")
@@ -1071,6 +1108,8 @@ def cmd_ecs_list(args) -> int:
         resp = ecs.describe_tasks(cluster=cluster, tasks=task_arns[i:i+100], include=["TAGS"])
         tasks.extend(resp.get("tasks", []))
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     rows = []
     for task in tasks:
         task_id = task["taskArn"].split("/")[-1]
@@ -1081,17 +1120,19 @@ def cmd_ecs_list(args) -> int:
                 for detail in att.get("details", []):
                     if detail["name"] == "privateIPv4Address":
                         ip = detail["value"]
+        user_id = tags.get("user_id", "")
         rows.append([
             task_id,
             task.get("lastStatus", ""),
             task.get("desiredStatus", ""),
             tags.get("container_id", ""),
-            tags.get("user_id", ""),
+            user_id,
+            email_map.get(user_id, ""),
             ip,
             task.get("startedAt", ""),
         ])
 
-    headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "IP Address", "Started At"]
+    headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "Email", "IP Address", "Started At"]
     print(tabulate(rows, headers=headers, tablefmt="grid"))
 
     running = sum(1 for t in tasks if t.get("desiredStatus") == "RUNNING")
@@ -1130,6 +1171,7 @@ def cmd_ecs_stop_all(args) -> int:
         resp = ecs.describe_tasks(cluster=cluster, tasks=task_arns[i:i+100], include=["TAGS"])
         tasks.extend(resp.get("tasks", []))
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
     stopped_count = 0
     db_deleted_count = 0
     db_eligible_count = 0
@@ -1148,6 +1190,7 @@ def cmd_ecs_stop_all(args) -> int:
         print(f"Task: {task_id}")
         print(f"  Container ID: {container_id or 'N/A'}")
         print(f"  User ID:      {user_id or 'N/A'}")
+        print(f"  Email:        {email_map.get(user_id, 'N/A') if user_id else 'N/A'}")
         print(f"  Status:       {task.get('lastStatus', 'UNKNOWN')}")
 
         if args.dry_run:
@@ -1231,6 +1274,8 @@ def cmd_ecs_cleanup(args) -> int:
         print("\nNo pending or failed containers found.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     print(f"\n{'='*60}")
     print(f"Total to clean up: {len(all_containers)}")
     print(f"{'='*60}\n")
@@ -1239,8 +1284,10 @@ def cmd_ecs_cleanup(args) -> int:
         print("DRY RUN — no changes will be made\n")
 
     for c in all_containers:
+        user_id = c['user_id']
         print(f"Container: {c['container_id']}")
-        print(f"  User:    {c['user_id']}")
+        print(f"  User:    {user_id}")
+        print(f"  Email:   {email_map.get(user_id, 'N/A')}")
         print(f"  Status:  {c['status']}")
         print(f"  Created: {c['created_at']}")
 
@@ -1432,12 +1479,17 @@ def cmd_k8s_cleanup(args) -> int:
         print(f"\nNo {'/' .join(statuses)} k8s containers found.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb_client, args.env)
+
     if args.dry_run:
         print("DRY RUN — no changes will be made\n")
 
     for c in k8s_containers:
         pod_name = c["task_arn"] or c["container_id"]
+        user_id = c['user_id']
         print(f"Container: {c['container_id']}  pod={pod_name}")
+        print(f"  User:    {user_id}")
+        print(f"  Email:   {email_map.get(user_id, 'N/A')}")
         print(f"  Status:  {c['status']}")
         if args.dry_run:
             action = "Would delete DynamoDB record" if c["status"] == "STOPPED" else "Would delete pod and DynamoDB record"
@@ -1848,15 +1900,21 @@ def cmd_k8s_reconcile(args) -> int:
         print("\n==> Cluster and DynamoDB are in sync.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb_client, args.env)
+
     if orphan_pods:
         print(f"\nOrphan pods:")
         for pod_name, user_id in sorted(orphan_pods.items()):
-            print(f"  {pod_name}  user_id={user_id or '(no label)'}")
+            email = email_map.get(user_id, "") if user_id else ""
+            email_str = f"  email={email}" if email else ""
+            print(f"  {pod_name}  user_id={user_id or '(no label)'}{email_str}")
 
     if ghost_records:
         print(f"\nGhost DB records:")
         for c in sorted(ghost_records, key=lambda x: x["container_id"]):
-            print(f"  {c['container_id']}  user={c['user_id']}  status={c['status']}  cluster={c['cluster'] or '?'}  created={c['created_at'][:10]}")
+            email = email_map.get(c['user_id'], "")
+            email_str = f"  email={email}" if email else ""
+            print(f"  {c['container_id']}  user={c['user_id']}{email_str}  status={c['status']}  cluster={c['cluster'] or '?'}  created={c['created_at'][:10]}")
 
     if args.dry_run:
         print(f"\n[DRY RUN] Would delete {len(orphan_pods)} orphan pod(s) and mark {len(ghost_records)} ghost record(s) as STOPPED")
