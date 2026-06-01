@@ -17,9 +17,12 @@ Groups and commands:
   ecs stop-all          Stop all running ECS tasks
   ecs cleanup           Remove PENDING and FAILED tasks from ECS and DynamoDB
 
-  k8s list              List pods in the k8s namespace
+  k8s list              List pods in the k8s namespace (shows user_id label column)
   k8s stop-all          Delete all running pods in the namespace
   k8s cleanup           Remove PENDING and FAILED containers from k8s and DynamoDB
+  k8s reconcile         Cross-reference live pods vs DynamoDB; surface/fix discrepancies
+
+  clusters list         List registered clusters from DynamoDB cluster registry
 
   config load           Load system or user defaults into DynamoDB
   config setup-test     Bootstrap local test config in DynamoDB
@@ -33,9 +36,10 @@ Common options (most commands):
   --cluster CLUSTER     ECS cluster name (default: clawtalk-{env})
 
 K8s options (containers logs/exec/inspect and k8s commands):
-  --kubeconfig PATH     Path to kubeconfig (default: ~/.kube/k3d-local.yaml)
-  --k8s-context NAME    Kubernetes context (default: k3d-local)
-  --namespace NS        Kubernetes namespace (default: openclaw)
+  --kubeconfig PATH           Path to local kubeconfig file
+  --kubeconfig-ssm-path PATH  SSM Parameter path to kubeconfig YAML (takes precedence over --kubeconfig)
+  --k8s-context NAME          Kubernetes context (default: current context in kubeconfig)
+  --namespace NS              Kubernetes namespace (default: openclaw)
 
 Examples:
   manage.py containers list
@@ -51,8 +55,14 @@ Examples:
   manage.py ecs stop-all --dry-run
   manage.py ecs cleanup --dry-run
   manage.py k8s list
+  manage.py k8s list --user-id 1fff374d-2a7a-479d-8739-ac42dbe6aeb3
   manage.py k8s stop-all --dry-run
+  manage.py k8s stop-all --keep-user 1fff374d-2a7a-479d-8739-ac42dbe6aeb3 --cleanup-db
   manage.py k8s cleanup --dry-run
+  manage.py k8s cleanup --include-stopped
+  manage.py k8s reconcile
+  manage.py k8s reconcile --fix --kubeconfig-ssm-path /clawtalk/dev/kubeconfig
+  manage.py clusters list
   manage.py config load --system --auth-gateway-url https://...
   manage.py config load --user-id abc123 --anthropic-api-key sk-ant-...
   manage.py config setup-test --user-id test-user --anthropic-key sk-ant-...
@@ -61,8 +71,10 @@ Examples:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -93,6 +105,36 @@ def resolve_table(env: str) -> str:
     return f"openclaw-containers-{env}"
 
 
+def resolve_users_table(env: str) -> str:
+    return f"auth-gateway-users-{env}" if env != "prod" else "auth-gateway-users"
+
+
+def _fetch_user_email_map(dynamodb, env: str) -> dict:
+    """Return a dict mapping user UUID -> email by scanning the auth-gateway-users table.
+
+    The auth-gateway-users table uses pk=USER#<email> and stores a `uuid` attribute.
+    Returns an empty dict on any error so callers degrade gracefully.
+    """
+    table = resolve_users_table(env)
+    try:
+        items = _dynamo_paginate(
+            dynamodb.scan,
+            TableName=table,
+            ProjectionExpression="pk, #u",
+            ExpressionAttributeNames={"#u": "uuid"},
+        )
+        result = {}
+        for item in items:
+            pk = item.get("pk", {}).get("S", "")
+            uuid = item.get("uuid", {}).get("S", "")
+            if pk.startswith("USER#") and uuid:
+                email = pk[len("USER#"):]
+                result[uuid] = email
+        return result
+    except Exception:
+        return {}
+
+
 COMMON_ARGS = [
     (["--env"], {"default": "dev", "metavar": "ENV", "help": "Environment: dev or prod (default: dev)"}),
     (["--profile"], {"default": "personal", "metavar": "PROFILE", "help": "AWS profile name (default: personal)"}),
@@ -107,8 +149,10 @@ def add_common(parser: argparse.ArgumentParser) -> None:
 
 
 K8S_ARGS = [
-    (["--kubeconfig"], {"default": None, "metavar": "PATH", "help": "Path to kubeconfig (default: ~/.kube/k3d-local.yaml)"}),
-    (["--k8s-context"],  {"default": None, "dest": "k8s_context", "metavar": "CTX",  "help": "Kubernetes context (default: k3d-local)"}),
+    (["--kubeconfig"], {"default": None, "metavar": "PATH", "help": "Path to local kubeconfig file"}),
+    (["--kubeconfig-ssm-path"], {"default": None, "dest": "kubeconfig_ssm_path", "metavar": "SSM_PATH",
+                                  "help": "SSM Parameter Store path to kubeconfig YAML (fetched via AWS, takes precedence over --kubeconfig)"}),
+    (["--k8s-context"],  {"default": None, "dest": "k8s_context", "metavar": "CTX",  "help": "Kubernetes context (default: current context in kubeconfig)"}),
     (["--namespace"],   {"default": None, "metavar": "NS",   "help": "Kubernetes namespace (default: openclaw)"}),
 ]
 
@@ -159,24 +203,72 @@ def _fetch_all_log_events(logs_client, **kwargs) -> list:
     return events
 
 
+def _fetch_kubeconfig_ssm(profile: str, region: str, ssm_path: str) -> str:
+    """Fetch kubeconfig YAML from SSM and write to a temp file. Returns the file path."""
+    session = make_boto_session(profile, region)
+    ssm = session.client("ssm")
+    print(f"==> Fetching kubeconfig from SSM: {ssm_path}")
+    response = ssm.get_parameter(Name=ssm_path, WithDecryption=True)
+    kubeconfig_yaml = response["Parameter"]["Value"]
+    # Include UID in filename to avoid conflicts on shared systems; write with 0o600 to
+    # protect sensitive credentials from other local users
+    safe_name = ssm_path.replace("/", "_").lstrip("_")
+    uid = os.getuid() if hasattr(os, "getuid") else "default"
+    tmp_path = os.path.join(tempfile.gettempdir(), f"manage_kube_{uid}_{safe_name}.yaml")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(tmp_path, flags, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(kubeconfig_yaml)
+    return tmp_path
+
+
+def _dynamo_get_clusters(dynamodb, table: str) -> list:
+    """Fetch all registered clusters from the SYSTEM cluster registry in DynamoDB."""
+    items = _dynamo_paginate(
+        dynamodb.query,
+        TableName=table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": {"S": "SYSTEM"}, ":prefix": {"S": "CLUSTER#"}},
+    )
+    return [
+        {
+            "name": item.get("name", {}).get("S", ""),
+            "backend": item.get("backend", {}).get("S", ""),
+            "namespace": item.get("namespace", {}).get("S", "openclaw"),
+            "registered_at": item.get("registered_at", {}).get("S", ""),
+            "last_seen_at": item.get("last_seen_at", {}).get("S", ""),
+        }
+        for item in items
+    ]
+
+
 def _resolve_k8s_args(args) -> tuple[str, str, str]:
-    """Return (kubeconfig, context, namespace) from args with defaults."""
-    import os
-    kubeconfig = getattr(args, "kubeconfig", None) or os.path.expanduser("~/.kube/k3d-local.yaml")
-    context    = getattr(args, "k8s_context",  None) or "k3d-local"
-    namespace  = getattr(args, "namespace",    None) or "openclaw"
+    """Return (kubeconfig, context, namespace) from args.
+
+    Kubeconfig resolution order:
+      1. --kubeconfig-ssm-path  →  fetch from AWS SSM, write to temp file
+      2. --kubeconfig           →  local file path
+      3. Default                →  ~/.kube/k3d-local.yaml
+    Context defaults to the current context in the kubeconfig if not specified.
+    """
+    kubeconfig_ssm = getattr(args, "kubeconfig_ssm_path", None)
+    if kubeconfig_ssm:
+        profile = getattr(args, "profile", "personal")
+        region = getattr(args, "region", "ap-southeast-2")
+        kubeconfig = _fetch_kubeconfig_ssm(profile, region, kubeconfig_ssm)
+    else:
+        kubeconfig = getattr(args, "kubeconfig", None) or os.path.expanduser("~/.kube/k3d-local.yaml")
+    context   = getattr(args, "k8s_context", None) or ""
+    namespace = getattr(args, "namespace",   None) or "openclaw"
     return kubeconfig, context, namespace
 
 
 def _kubectl(kubeconfig: str, context: str, namespace: str, *extra_args) -> tuple[str, str, int]:
     """Run kubectl and return (stdout, stderr, returncode)."""
-    cmd = [
-        "kubectl",
-        f"--kubeconfig={kubeconfig}",
-        f"--context={context}",
-        f"--namespace={namespace}",
-        *extra_args,
-    ]
+    cmd = ["kubectl", f"--kubeconfig={kubeconfig}"]
+    if context:
+        cmd.append(f"--context={context}")
+    cmd += [f"--namespace={namespace}", *extra_args]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.stdout, result.stderr, result.returncode
 
@@ -216,6 +308,8 @@ def cmd_containers_list(args) -> int:
         print("No containers found.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     table_data = []
     for item in container_items:
         container_id = item.get("sk", {}).get("S", "").replace("CONTAINER#", "")
@@ -227,12 +321,12 @@ def cmd_containers_list(args) -> int:
         health = item.get("health_status", {}).get("S", "")
         backend = item.get("backend", {}).get("S", "ecs")
         table_data.append([
-            container_id, user, status, health, ip, backend,
+            container_id, user, email_map.get(user, ""), status, health, ip, backend,
             task_arn.split("/")[-1] if task_arn else "",
             created,
         ])
 
-    headers = ["Container ID", "User ID", "Status", "Health", "IP Address", "Backend", "Task/Pod ID", "Created At"]
+    headers = ["Container ID", "User ID", "Email", "Status", "Health", "IP Address", "Backend", "Task/Pod ID", "Created At"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
     print(f"\nTotal containers: {len(container_items)}")
     return 0
@@ -391,6 +485,7 @@ def _parse_container_item(item: dict) -> dict:
         "status": item.get("status", {}).get("S", ""),
         "task_arn": item.get("task_arn", {}).get("S", ""),
         "backend": item.get("backend", {}).get("S", "ecs"),
+        "cluster": item.get("cluster", {}).get("S", ""),
         "created_at": item.get("created_at", {}).get("S", ""),
         "pk": item.get("pk", {}).get("S", ""),
         "sk": item.get("sk", {}).get("S", ""),
@@ -571,7 +666,7 @@ def _print_section(title: str) -> None:
     print(f"{'=' * 60}")
 
 
-def _inspect_dynamodb(item: dict) -> dict:
+def _inspect_dynamodb(item: dict, email: str = "") -> dict:
     _print_section("DynamoDB Record")
 
     def get(key):
@@ -581,6 +676,7 @@ def _inspect_dynamodb(item: dict) -> dict:
     fields = {
         "Container ID": get("sk").replace("CONTAINER#", ""),
         "User ID": get("user_id"),
+        "Email": email,
         "Status": get("status"),
         "Health Status": get("health_status"),
         "IP Address": get("ip_address"),
@@ -750,7 +846,10 @@ def cmd_containers_inspect(args) -> int:
         created_at = None
         backend = "ecs"
     else:
-        fields = _inspect_dynamodb(item)
+        dynamodb = session.client("dynamodb")
+        email_map = _fetch_user_email_map(dynamodb, args.env)
+        user_id = item.get("user_id", {}).get("S", "")
+        fields = _inspect_dynamodb(item, email=email_map.get(user_id, ""))
         task_arn_for_logs = fields.get("Task ARN / Pod")
         created_at = fields.get("Created At")
         backend = fields.get("Backend", "ecs")
@@ -993,6 +1092,7 @@ def cmd_containers_exec(args) -> int:
 def cmd_ecs_list(args) -> int:
     session = make_boto_session(args.profile, args.region)
     ecs = session.client("ecs")
+    dynamodb = session.client("dynamodb")
     cluster = resolve_cluster(args.env, args.cluster)
 
     print(f"==> Listing ECS tasks in cluster: {cluster}\n")
@@ -1008,6 +1108,8 @@ def cmd_ecs_list(args) -> int:
         resp = ecs.describe_tasks(cluster=cluster, tasks=task_arns[i:i+100], include=["TAGS"])
         tasks.extend(resp.get("tasks", []))
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     rows = []
     for task in tasks:
         task_id = task["taskArn"].split("/")[-1]
@@ -1018,17 +1120,19 @@ def cmd_ecs_list(args) -> int:
                 for detail in att.get("details", []):
                     if detail["name"] == "privateIPv4Address":
                         ip = detail["value"]
+        user_id = tags.get("user_id", "")
         rows.append([
             task_id,
             task.get("lastStatus", ""),
             task.get("desiredStatus", ""),
             tags.get("container_id", ""),
-            tags.get("user_id", ""),
+            user_id,
+            email_map.get(user_id, ""),
             ip,
             task.get("startedAt", ""),
         ])
 
-    headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "IP Address", "Started At"]
+    headers = ["Task ID", "Status", "Desired", "Container ID", "User ID", "Email", "IP Address", "Started At"]
     print(tabulate(rows, headers=headers, tablefmt="grid"))
 
     running = sum(1 for t in tasks if t.get("desiredStatus") == "RUNNING")
@@ -1067,6 +1171,7 @@ def cmd_ecs_stop_all(args) -> int:
         resp = ecs.describe_tasks(cluster=cluster, tasks=task_arns[i:i+100], include=["TAGS"])
         tasks.extend(resp.get("tasks", []))
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
     stopped_count = 0
     db_deleted_count = 0
     db_eligible_count = 0
@@ -1085,6 +1190,7 @@ def cmd_ecs_stop_all(args) -> int:
         print(f"Task: {task_id}")
         print(f"  Container ID: {container_id or 'N/A'}")
         print(f"  User ID:      {user_id or 'N/A'}")
+        print(f"  Email:        {email_map.get(user_id, 'N/A') if user_id else 'N/A'}")
         print(f"  Status:       {task.get('lastStatus', 'UNKNOWN')}")
 
         if args.dry_run:
@@ -1168,6 +1274,8 @@ def cmd_ecs_cleanup(args) -> int:
         print("\nNo pending or failed containers found.")
         return 0
 
+    email_map = _fetch_user_email_map(dynamodb, args.env)
+
     print(f"\n{'='*60}")
     print(f"Total to clean up: {len(all_containers)}")
     print(f"{'='*60}\n")
@@ -1176,8 +1284,10 @@ def cmd_ecs_cleanup(args) -> int:
         print("DRY RUN — no changes will be made\n")
 
     for c in all_containers:
+        user_id = c['user_id']
         print(f"Container: {c['container_id']}")
-        print(f"  User:    {c['user_id']}")
+        print(f"  User:    {user_id}")
+        print(f"  Email:   {email_map.get(user_id, 'N/A')}")
         print(f"  Status:  {c['status']}")
         print(f"  Created: {c['created_at']}")
 
@@ -1222,8 +1332,19 @@ def cmd_ecs_cleanup(args) -> int:
 def cmd_k8s_list(args) -> int:
     kubeconfig, context, namespace = _resolve_k8s_args(args)
 
-    print(f"==> Listing pods in namespace '{namespace}'\n")
-    stdout, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-o", "wide")
+    label_sel = "app=openclaw-agent"
+    user_id = getattr(args, "user_id", None)
+    if user_id:
+        label_sel += f",user_id={user_id}"
+        print(f"==> Listing pods in namespace '{namespace}' for user_id={user_id}\n")
+    else:
+        print(f"==> Listing pods in namespace '{namespace}'\n")
+
+    # -L user_id adds the label value as a column; -L container_id likewise
+    stdout, stderr, rc = _kubectl(
+        kubeconfig, context, namespace,
+        "get", "pods", "-l", label_sel, "-o", "wide", "-L", "user_id",
+    )
     if rc != 0:
         print(f"Error: {stderr.strip()}")
         return rc
@@ -1242,22 +1363,45 @@ def cmd_k8s_stop_all(args) -> int:
     session = make_boto_session(args.profile, args.region)
     dynamodb_client = session.client("dynamodb")
 
+    user_id    = getattr(args, "user_id", None)
+    keep_user  = getattr(args, "keep_user", None)
+
     print(f"Namespace:        {namespace}")
     print(f"Cleanup DynamoDB: {args.cleanup_db}")
     print(f"Dry Run:          {args.dry_run}")
+    if user_id:
+        print(f"Filter user:      {user_id}")
+    if keep_user:
+        print(f"Keep user:        {keep_user}")
     print("-" * 60)
 
-    stdout, stderr, rc = _kubectl(
-        kubeconfig, context, namespace,
-        "get", "pods",
-        "-l", "app=openclaw-agent",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}\\n{end}",
-    )
+    # Build initial label selector; --user-id narrows to a single user
+    label_sel = "app=openclaw-agent"
+    if user_id:
+        label_sel += f",user_id={user_id}"
+
+    # Fetch pods as JSON in a single call to get names and labels together.
+    # This avoids a second kubectl round-trip and prevents the fail-open bug where a
+    # failed label lookup would cause all pods (including kept ones) to be deleted.
+    stdout_json, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-l", label_sel, "-o", "json")
     if rc != 0:
         print(f"Error listing pods: {stderr.strip()}")
         return rc
 
-    pod_names = [p for p in stdout.strip().splitlines() if p]
+    try:
+        pods_data = json.loads(stdout_json).get("items", []) if stdout_json.strip() else []
+    except json.JSONDecodeError:
+        print("Error: could not parse pod list JSON")
+        return 1
+
+    if keep_user:
+        pod_names = [
+            pod["metadata"]["name"] for pod in pods_data
+            if pod["metadata"].get("labels", {}).get("user_id", "") != keep_user
+        ]
+    else:
+        pod_names = [pod["metadata"]["name"] for pod in pods_data]
+
     if not pod_names:
         print("No pods found.")
         return 0
@@ -1317,34 +1461,44 @@ def cmd_k8s_cleanup(args) -> int:
     session = make_boto_session(args.profile, args.region)
     dynamodb_client = session.client("dynamodb")
 
-    print(f"==> Cleaning up PENDING and FAILED k8s containers")
+    include_stopped = getattr(args, "include_stopped", False)
+    statuses = ["PENDING", "FAILED"] + (["STOPPED"] if include_stopped else [])
+
+    print(f"==> Cleaning up {'/'.join(statuses)} k8s containers")
     print(f"    Namespace: {namespace}")
     print(f"    Table:     {table_name}\n")
 
-    all_containers = _get_containers_by_status(dynamodb_client, table_name, "PENDING", "FAILED")
+    all_containers = _get_containers_by_status(dynamodb_client, table_name, *statuses)
     k8s_containers = [c for c in all_containers if c.get("backend", "ecs") == "k8s"]
 
-    pending = sum(1 for c in k8s_containers if c["status"] == "PENDING")
-    failed  = sum(1 for c in k8s_containers if c["status"] == "FAILED")
-    print(f"Found {pending} PENDING k8s containers")
-    print(f"Found {failed} FAILED k8s containers")
+    for status in statuses:
+        count = sum(1 for c in k8s_containers if c["status"] == status)
+        print(f"Found {count} {status} k8s containers")
 
     if not k8s_containers:
-        print("\nNo pending or failed k8s containers found.")
+        print(f"\nNo {'/' .join(statuses)} k8s containers found.")
         return 0
+
+    email_map = _fetch_user_email_map(dynamodb_client, args.env)
 
     if args.dry_run:
         print("DRY RUN — no changes will be made\n")
 
     for c in k8s_containers:
         pod_name = c["task_arn"] or c["container_id"]
+        user_id = c['user_id']
         print(f"Container: {c['container_id']}  pod={pod_name}")
+        print(f"  User:    {user_id}")
+        print(f"  Email:   {email_map.get(user_id, 'N/A')}")
         print(f"  Status:  {c['status']}")
         if args.dry_run:
-            print(f"  [DRY RUN] Would delete pod and DynamoDB record")
+            action = "Would delete DynamoDB record" if c["status"] == "STOPPED" else "Would delete pod and DynamoDB record"
+            print(f"  [DRY RUN] {action}")
         else:
-            _kubectl(kubeconfig, context, namespace, "delete", "pod", pod_name, "--ignore-not-found")
-            print(f"  Pod delete requested")
+            # For STOPPED containers the pod is already gone; skip kubectl for them
+            if c["status"] != "STOPPED":
+                _kubectl(kubeconfig, context, namespace, "delete", "pod", pod_name, "--ignore-not-found")
+                print(f"  Pod delete requested")
             try:
                 dynamodb_client.delete_item(
                     TableName=table_name,
@@ -1671,6 +1825,165 @@ def cmd_verify(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# k8s reconcile
+# ---------------------------------------------------------------------------
+
+
+def cmd_k8s_reconcile(args) -> int:
+    """Cross-reference live k8s pods against DynamoDB and surface/fix discrepancies.
+
+    Orphan pods  — running in k8s but no active (RUNNING/PENDING) DynamoDB record.
+    Ghost records — DynamoDB says RUNNING/PENDING but the pod no longer exists.
+    """
+    kubeconfig, context, namespace = _resolve_k8s_args(args)
+    table_name = resolve_table(args.env)
+    session = make_boto_session(args.profile, args.region)
+    dynamodb_client = session.client("dynamodb")
+
+    print(f"==> Reconciling k8s cluster vs DynamoDB")
+    print(f"    Namespace: {namespace}")
+    print(f"    Table:     {table_name}\n")
+
+    # Show registered clusters for context
+    clusters = _dynamo_get_clusters(dynamodb_client, table_name)
+    k8s_clusters = [c for c in clusters if c["backend"] == "k8s"]
+    if k8s_clusters:
+        print(f"Registered k8s clusters:")
+        for c in k8s_clusters:
+            last_seen = c["last_seen_at"][:10] if c["last_seen_at"] else "unknown"
+            print(f"  {c['name']}  namespace={c['namespace']}  last_seen={last_seen}")
+        print()
+
+    # Fetch all active (RUNNING/PENDING) k8s containers from DynamoDB
+    active_items = _dynamo_paginate(
+        dynamodb_client.scan,
+        TableName=table_name,
+        FilterExpression="#s IN (:r, :p) AND begins_with(sk, :sk_prefix)",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={
+            ":r": {"S": "RUNNING"},
+            ":p": {"S": "PENDING"},
+            ":sk_prefix": {"S": "CONTAINER#"},
+        },
+    )
+    db_active = {
+        c["container_id"]: c
+        for c in (_parse_container_item(i) for i in active_items)
+        if c["backend"] == "k8s"
+    }
+
+    # Fetch live pods from k8s (Running + Pending phases)
+    stdout, stderr, rc = _kubectl(kubeconfig, context, namespace, "get", "pods", "-l", "app=openclaw-agent", "-o", "json")
+    if rc != 0:
+        print(f"Error listing pods: {stderr.strip()}")
+        return rc
+
+    pods_json = json.loads(stdout) if stdout.strip() else {"items": []}
+    live_pods: dict[str, str] = {}  # pod_name → user_id label
+    for pod in pods_json.get("items", []):
+        phase = (pod.get("status") or {}).get("phase", "")
+        if phase in ("Running", "Pending"):
+            name = pod["metadata"]["name"]
+            user_id = pod["metadata"].get("labels", {}).get("user_id", "")
+            live_pods[name] = user_id
+
+    # Compute discrepancies
+    orphan_pods   = {name: uid for name, uid in live_pods.items() if name not in db_active}
+    ghost_records = [c for c in db_active.values() if c["container_id"] not in live_pods]
+
+    print(f"Live pods (Running/Pending): {len(live_pods)}")
+    print(f"Active DynamoDB records:     {len(db_active)}")
+    print(f"Orphan pods:                 {len(orphan_pods)}  (in k8s, no active DB record)")
+    print(f"Ghost DB records:            {len(ghost_records)}  (DB says active, pod gone)")
+
+    if not orphan_pods and not ghost_records:
+        print("\n==> Cluster and DynamoDB are in sync.")
+        return 0
+
+    email_map = _fetch_user_email_map(dynamodb_client, args.env)
+
+    if orphan_pods:
+        print(f"\nOrphan pods:")
+        for pod_name, user_id in sorted(orphan_pods.items()):
+            email = email_map.get(user_id, "") if user_id else ""
+            email_str = f"  email={email}" if email else ""
+            print(f"  {pod_name}  user_id={user_id or '(no label)'}{email_str}")
+
+    if ghost_records:
+        print(f"\nGhost DB records:")
+        for c in sorted(ghost_records, key=lambda x: x["container_id"]):
+            email = email_map.get(c['user_id'], "")
+            email_str = f"  email={email}" if email else ""
+            print(f"  {c['container_id']}  user={c['user_id']}{email_str}  status={c['status']}  cluster={c['cluster'] or '?'}  created={c['created_at'][:10]}")
+
+    if args.dry_run:
+        print(f"\n[DRY RUN] Would delete {len(orphan_pods)} orphan pod(s) and mark {len(ghost_records)} ghost record(s) as STOPPED")
+        return 0
+
+    if not args.fix:
+        print(f"\nRe-run with --fix to apply changes, or --dry-run to preview.")
+        return 0
+
+    print()
+    for pod_name in orphan_pods:
+        _, del_err, del_rc = _kubectl(kubeconfig, context, namespace, "delete", "pod", pod_name, "--ignore-not-found")
+        if del_rc == 0:
+            print(f"  Deleted orphan pod: {pod_name}")
+        else:
+            print(f"  Error deleting {pod_name}: {del_err.strip()}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    for c in ghost_records:
+        try:
+            dynamodb_client.update_item(
+                TableName=table_name,
+                Key={"pk": {"S": c["pk"]}, "sk": {"S": c["sk"]}},
+                UpdateExpression="SET #s = :stopped, updated_at = :now",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":stopped": {"S": "STOPPED"}, ":now": {"S": now}},
+            )
+            print(f"  Marked STOPPED: {c['container_id']} (was {c['status']})")
+        except Exception as e:
+            print(f"  Error updating {c['container_id']}: {e}")
+
+    print(f"\n==> Reconcile complete")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# clusters list
+# ---------------------------------------------------------------------------
+
+
+def cmd_clusters_list(args) -> int:
+    table_name = resolve_table(args.env)
+    session = make_boto_session(args.profile, args.region)
+    dynamodb_client = session.client("dynamodb")
+
+    print(f"==> Registered clusters ({table_name})\n")
+    clusters = _dynamo_get_clusters(dynamodb_client, table_name)
+
+    if not clusters:
+        print("No clusters registered.")
+        return 0
+
+    rows = [
+        [
+            c["name"],
+            c["backend"],
+            c["namespace"],
+            c["registered_at"][:19] if c["registered_at"] else "",
+            c["last_seen_at"][:19] if c["last_seen_at"] else "",
+        ]
+        for c in clusters
+    ]
+    headers = ["Name", "Backend", "Namespace", "Registered At", "Last Seen At"]
+    print(tabulate(rows, headers=headers, tablefmt="grid"))
+    print(f"\nTotal clusters: {len(clusters)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1888,9 +2201,10 @@ def build_parser() -> argparse.ArgumentParser:
     k_sub.required = True
 
     # k8s list
-    p = k_sub.add_parser("list", help="List pods in the openclaw namespace")
+    p = k_sub.add_parser("list", help="List pods in the openclaw namespace (shows user_id label column)")
     add_common(p)
     add_k8s_args(p)
+    p.add_argument("--user-id", metavar="USER_ID", help="Filter to pods owned by this user_id label")
     p.set_defaults(func=cmd_k8s_list)
 
     # k8s stop-all
@@ -1901,6 +2215,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Also delete container records from DynamoDB")
     p.add_argument("--dry-run", action="store_true",
                    help="Show what would happen without making changes")
+    p.add_argument("--user-id", metavar="USER_ID",
+                   help="Only stop pods owned by this user_id label")
+    p.add_argument("--keep-user", metavar="USER_ID", dest="keep_user",
+                   help="Stop all pods EXCEPT those owned by this user_id label")
     p.set_defaults(func=cmd_k8s_stop_all)
 
     # k8s cleanup
@@ -1909,7 +2227,33 @@ def build_parser() -> argparse.ArgumentParser:
     add_k8s_args(p)
     p.add_argument("--dry-run", action="store_true",
                    help="Show what would happen without making changes")
+    p.add_argument("--include-stopped", action="store_true", dest="include_stopped",
+                   help="Also remove STOPPED records whose pods are already gone")
     p.set_defaults(func=cmd_k8s_cleanup)
+
+    # k8s reconcile
+    p = k_sub.add_parser(
+        "reconcile",
+        help="Cross-reference live k8s pods vs DynamoDB and surface/fix discrepancies",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Compare live k8s pods against DynamoDB and identify:\n"
+            "  Orphan pods   — running in k8s but no active DB record\n"
+            "  Ghost records — DynamoDB says RUNNING/PENDING but pod is gone\n\n"
+            "Examples:\n"
+            "  manage.py k8s reconcile                          # report only\n"
+            "  manage.py k8s reconcile --dry-run                # preview changes\n"
+            "  manage.py k8s reconcile --fix                    # apply fixes\n"
+            "  manage.py k8s reconcile --fix --kubeconfig-ssm-path /clawtalk/dev/kubeconfig"
+        ),
+    )
+    add_common(p)
+    add_k8s_args(p)
+    p.add_argument("--fix", action="store_true",
+                   help="Delete orphan pods and mark ghost records as STOPPED")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would be changed without applying")
+    p.set_defaults(func=cmd_k8s_reconcile)
 
     # -----------------------------------------------------------------------
     # config
@@ -1997,6 +2341,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--table", default="openclaw-containers", metavar="TABLE",
                    help="DynamoDB table name (default: openclaw-containers)")
     p.set_defaults(func=cmd_config_setup_test)
+
+    # -----------------------------------------------------------------------
+    # clusters
+    # -----------------------------------------------------------------------
+    cl = groups.add_parser(
+        "clusters",
+        help="Cluster registry management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Query the DynamoDB cluster registry.\n\nCommands: list",
+    )
+    cl_sub = cl.add_subparsers(dest="command", metavar="COMMAND")
+    cl_sub.required = True
+
+    # clusters list
+    p = cl_sub.add_parser("list", help="List all registered clusters from DynamoDB")
+    add_common(p)
+    p.set_defaults(func=cmd_clusters_list)
 
     # -----------------------------------------------------------------------
     # verify
