@@ -7,9 +7,10 @@ Tests the complete flow against live AWS infrastructure:
   3. Uses the API key to create a container via orchestrator
   4. Monitors container status until RUNNING
   5. Validates critical log entries (openclaw-agent startup, voice-gateway connection)
+  6. Cleans up container and user on teardown
 
 Environment variables required:
-  ANTHROPIC_API_KEY   Anthropic API key for user config
+  OPENROUTER_API_KEY  OpenRouter API key for user config
   E2E_TESTS=1         Enable this test suite (skipped by default)
 
 Optional overrides:
@@ -19,7 +20,7 @@ Optional overrides:
   AWS_PROFILE         AWS profile (default: personal)
 
 Run:
-  E2E_TESTS=1 ANTHROPIC_API_KEY=sk-ant-... pytest tests/e2e/test_end_to_end_flow.py -v
+  E2E_TESTS=1 OPENROUTER_API_KEY=sk-or-... pytest tests/e2e/test_end_to_end_flow.py -v
 """
 
 import json
@@ -146,229 +147,242 @@ def make_simple_request(
 
 
 def test_end_to_end_flow():
-    """Full container provisioning flow: create user → config → container → RUNNING → validate logs."""
+    """Full container provisioning flow: create user → config → container → RUNNING → validate logs → cleanup."""
     print_header("End-to-End Container Provisioning Test")
     print_info(f"Started at: {datetime.now().isoformat()}")
 
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-    assert anthropic_api_key, "ANTHROPIC_API_KEY must be set"
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+    assert openrouter_api_key, "OPENROUTER_API_KEY must be set"
 
     timestamp = int(time.time())
     test_email = f"test-user-{timestamp}@example.com"
     test_display_name = f"Test User {timestamp}"
 
-    # Step 1: Create user
-    print_step(1, "Create user in auth-gateway")
-    response = make_request(
-        "POST", f"{AUTH_GATEWAY_URL}/users",
-        json_data={"email": test_email, "display_name": test_display_name},
-    )
-    assert response.status_code == 201, f"Failed to create user: {response.status_code} {response.text}"
-    user_data = response.json()
-    user_id = user_data["uuid"]
-    api_key = user_data["api_key"]
-    print_success(f"User created: {user_id}")
+    user_id = None
+    api_key = None
+    container_id = None
 
-    # Step 2: Validate API key
-    print_step(2, "Validate API key")
-    response = make_request("GET", f"{AUTH_GATEWAY_URL}/auth", headers={"Authorization": f"Bearer {api_key}"})
-    assert response.status_code == 200, f"API key validation failed: {response.status_code}"
-    assert response.json()["user_id"] == user_id, "User ID mismatch"
-    print_success("API key validated")
-
-    # Step 3: Create user config
-    print_step(3, "Create user config via Config API")
-    response = make_request(
-        "POST", f"{ORCHESTRATOR_URL}/config",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json_data={
-            "config_name": "default",
-            "llm_provider": "anthropic",
-            "openclaw_model": "claude-3-5-sonnet-20241022",
-            "anthropic_api_key": anthropic_api_key,
-            "auth_gateway_api_key": api_key,
-        },
-    )
-    assert response.status_code in (200, 201), f"Failed to create config: {response.status_code} {response.text}"
-    print_success("User config created")
-
-    # Step 3b: Update config with full system values
-    print_step("3b", "Update config with system URLs")
-    response = make_request(
-        "PUT", f"{ORCHESTRATOR_URL}/config/default",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json_data={
-            "llm_provider": "anthropic",
-            "anthropic_api_key": anthropic_api_key,
-            "openclaw_model": "claude-3-5-sonnet-20241022",
-            "auth_gateway_api_key": api_key,
-            "auth_gateway_url": AUTH_GATEWAY_URL,
-            "openclaw_url": "http://localhost:18789",
-            "openclaw_token": "test-token-123",
-            "voice_gateway_url": "ws://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
-        },
-    )
-    assert response.status_code == 200, f"Failed to update config: {response.status_code} {response.text}"
-    print_success("Config updated")
-
-    # Step 4: Verify config
-    print_step(4, "Verify config")
-    response = make_request("GET", f"{ORCHESTRATOR_URL}/config/default",
-                            headers={"Authorization": f"Bearer {api_key}"})
-    assert response.status_code == 200, f"Failed to retrieve config: {response.status_code}"
-    config_data = response.json()
-    assert config_data.get("config_name") == "default"
-    assert config_data.get("llm_provider") == "anthropic"
-    print_success("Config verified")
-
-    # Step 5: Create container
-    print_step(5, "Create container")
-    response = make_request(
-        "POST", f"{ORCHESTRATOR_URL}/containers",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json_data={"config_name": "default", "env_vars": {"DEBUG": "true"}},
-    )
-    assert response.status_code == 200, f"Failed to create container: {response.status_code} {response.text}"
-    container_data = response.json()
-    container_id = container_data["container_id"]
-    print_success(f"Container created: {container_id}")
-
-    # Step 6: Monitor until RUNNING
-    print_step(6, "Monitor container status")
-    max_attempts = 60
-    poll_interval = 15
-    start_time = time.time()
-    reached_running = False
-
-    for attempt in range(max_attempts):
-        response = make_simple_request(
-            "GET", f"{ORCHESTRATOR_URL}/containers/{container_id}",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        if response.status_code != 200:
-            time.sleep(poll_interval)
-            continue
-
-        container_data = response.json()
-        status = container_data["status"]
-        elapsed = time.time() - start_time
-        print(f"  [{elapsed:>5.0f}s] status={status}")
-
-        if status == "RUNNING":
-            health = container_data.get("health_status", "UNKNOWN")
-            if health in ("HEALTHY", "STARTING"):
-                print_success("Container is running")
-                reached_running = True
-                break
-        elif status in ("FAILED", "STOPPED"):
-            pytest.fail(f"Container reached terminal status: {status}")
-
-        time.sleep(poll_interval)
-
-    if not reached_running:
-        print_warning(f"Container did not reach RUNNING in {max_attempts * poll_interval}s — ECS may still be starting")
-
-    # Step 7: Validate container logs
-    print_step(7, "Validate container logs (5 minutes)")
     try:
-        import boto3
-        from dateutil import parser as date_parser
+        # Step 1: Create user
+        print_step(1, "Create user in auth-gateway")
+        response = make_request(
+            "POST", f"{AUTH_GATEWAY_URL}/users",
+            json_data={"email": test_email, "display_name": test_display_name, "password": f"Test-{timestamp}!"},
+        )
+        assert response.status_code == 201, f"Failed to create user: {response.status_code} {response.text}"
+        user_data = response.json()
+        user_id = user_data["uuid"]
+        api_key = user_data["api_key"]
+        print_success(f"User created: {user_id}")
 
-        session_kwargs: dict = {"region_name": DYNAMODB_REGION}
-        if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
-            session_kwargs["profile_name"] = AWS_PROFILE
+        # Step 2: Validate API key
+        print_step(2, "Validate API key")
+        response = make_request("GET", f"{AUTH_GATEWAY_URL}/auth", headers={"Authorization": f"Bearer {api_key}"})
+        assert response.status_code == 200, f"API key validation failed: {response.status_code}"
+        assert response.json()["user_id"] == user_id, "User ID mismatch"
+        print_success("API key validated")
 
-        session = boto3.Session(**session_kwargs)
-        logs_client = session.client("logs")
-        ecs_client = session.client("ecs")
+        # Step 3: Write user config via API (PUT handles auto-created default config)
+        print_step(3, "Write user config via Config API")
+        response = make_request(
+            "PUT", f"{ORCHESTRATOR_URL}/config/default",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json_data={
+                "llm_provider": "openrouter",
+                "openrouter_api_key": openrouter_api_key,
+                "openclaw_model": "anthropic/claude-haiku-4-5",
+                "auth_gateway_api_key": api_key,
+                "auth_gateway_url": AUTH_GATEWAY_URL,
+                "openclaw_url": "http://localhost:18789",
+                "openclaw_token": "test-token-123",
+                "voice_gateway_url": "ws://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
+            },
+        )
+        assert response.status_code == 200, f"Failed to write config: {response.status_code} {response.text}"
+        print_success("User config written")
 
-        tasks_response = ecs_client.list_tasks(cluster=ECS_CLUSTER_NAME, desiredStatus="RUNNING")
-        task_arn = None
+        # Step 4: Verify config
+        print_step(4, "Verify config")
+        response = make_request("GET", f"{ORCHESTRATOR_URL}/config/default",
+                                headers={"Authorization": f"Bearer {api_key}"})
+        assert response.status_code == 200, f"Failed to retrieve config: {response.status_code}"
+        config_data = response.json()
+        assert config_data.get("config_name") == "default"
+        assert config_data.get("llm_provider") == "openrouter"
+        print_success("Config verified")
 
-        if tasks_response["taskArns"]:
-            tasks = ecs_client.describe_tasks(cluster=ECS_CLUSTER_NAME, tasks=tasks_response["taskArns"])
-            container_created = date_parser.parse(container_data["created_at"])
-            for task in tasks["tasks"]:
-                time_diff = abs((task["startedAt"] - container_created).total_seconds())
-                if time_diff < 60:
-                    task_arn = task["taskArn"]
-                    task_id = task_arn.split("/")[-1]
-                    print_success(f"Found ECS task: {task_id}")
+        # Step 5: Create container
+        print_step(5, "Create container")
+        response = make_request(
+            "POST", f"{ORCHESTRATOR_URL}/containers",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json_data={"config_name": "default", "agent_id": "e2e-test-agent", "env_vars": {"DEBUG": "true"}},
+        )
+        assert response.status_code == 200, f"Failed to create container: {response.status_code} {response.text}"
+        container_data = response.json()
+        container_id = container_data["container_id"]
+        print_success(f"Container created: {container_id}")
+
+        # Step 6: Monitor until RUNNING
+        print_step(6, "Monitor container status")
+        max_attempts = 60
+        poll_interval = 15
+        start_time = time.time()
+        reached_running = False
+
+        for attempt in range(max_attempts):
+            response = make_simple_request(
+                "GET", f"{ORCHESTRATOR_URL}/containers/{container_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            if response.status_code != 200:
+                time.sleep(poll_interval)
+                continue
+
+            container_data = response.json()
+            status = container_data["status"]
+            elapsed = time.time() - start_time
+            print(f"  [{elapsed:>5.0f}s] status={status}")
+
+            if status == "RUNNING":
+                health = container_data.get("health_status", "UNKNOWN")
+                if health in ("HEALTHY", "STARTING"):
+                    print_success("Container is running")
+                    reached_running = True
                     break
+            elif status in ("FAILED", "STOPPED"):
+                pytest.fail(f"Container reached terminal status: {status}")
 
-        if not task_arn:
-            print_warning("Could not find ECS task — skipping log validation")
-        else:
-            log_stream_prefix = f"ecs/openclaw-agent/{task_id}"
-            print_info(f"Collecting logs from {ECS_LOG_GROUP}/{log_stream_prefix} for 5 minutes...")
+            time.sleep(poll_interval)
 
-            log_start = time.time()
-            log_duration = 300
-            last_timestamp = None
-            all_messages: list = []
+        if not reached_running:
+            print_warning(f"Container did not reach RUNNING in {max_attempts * poll_interval}s — ECS may still be starting")
 
-            while time.time() - log_start < log_duration:
-                try:
-                    streams_response = logs_client.describe_log_streams(
-                        logGroupName=ECS_LOG_GROUP,
-                        logStreamNamePrefix=log_stream_prefix,
-                        limit=1,
-                    )
-                    if not streams_response["logStreams"]:
+        # Step 7: Validate container logs
+        print_step(7, "Validate container logs (5 minutes)")
+        try:
+            import boto3
+            from dateutil import parser as date_parser
+
+            session_kwargs: dict = {"region_name": DYNAMODB_REGION}
+            if AWS_PROFILE and not os.getenv("AWS_ACCESS_KEY_ID"):
+                session_kwargs["profile_name"] = AWS_PROFILE
+
+            session = boto3.Session(**session_kwargs)
+            logs_client = session.client("logs")
+            ecs_client = session.client("ecs")
+
+            tasks_response = ecs_client.list_tasks(cluster=ECS_CLUSTER_NAME, desiredStatus="RUNNING")
+            task_arn = None
+
+            if tasks_response["taskArns"]:
+                tasks = ecs_client.describe_tasks(cluster=ECS_CLUSTER_NAME, tasks=tasks_response["taskArns"])
+                container_created = date_parser.parse(container_data["created_at"])
+                for task in tasks["tasks"]:
+                    time_diff = abs((task["startedAt"] - container_created).total_seconds())
+                    if time_diff < 60:
+                        task_arn = task["taskArn"]
+                        task_id = task_arn.split("/")[-1]
+                        print_success(f"Found ECS task: {task_id}")
+                        break
+
+            if not task_arn:
+                print_warning("Could not find ECS task — skipping log validation")
+            else:
+                log_stream_prefix = f"ecs/openclaw-agent/{task_id}"
+                print_info(f"Collecting logs from {ECS_LOG_GROUP}/{log_stream_prefix} for 5 minutes...")
+
+                log_start = time.time()
+                log_duration = 300
+                last_timestamp = None
+                all_messages: list = []
+
+                while time.time() - log_start < log_duration:
+                    try:
+                        streams_response = logs_client.describe_log_streams(
+                            logGroupName=ECS_LOG_GROUP,
+                            logStreamNamePrefix=log_stream_prefix,
+                            limit=1,
+                        )
+                        if not streams_response["logStreams"]:
+                            time.sleep(5)
+                            continue
+
+                        log_stream_name = streams_response["logStreams"][0]["logStreamName"]
+                        get_kwargs: dict = {
+                            "logGroupName": ECS_LOG_GROUP,
+                            "logStreamName": log_stream_name,
+                            "startFromHead": True,
+                            "limit": 100,
+                        }
+                        if last_timestamp:
+                            get_kwargs["startTime"] = last_timestamp + 1
+
+                        events_response = logs_client.get_log_events(**get_kwargs)
+                        for event in events_response["events"]:
+                            msg = event["message"]
+                            if msg not in all_messages:
+                                all_messages.append(msg)
+                                print(f"    {msg}")
+                            last_timestamp = event["timestamp"]
+
+                        time.sleep(3)
+                    except Exception as e:
+                        print_warning(f"Error fetching logs: {e}")
                         time.sleep(5)
-                        continue
 
-                    log_stream_name = streams_response["logStreams"][0]["logStreamName"]
-                    get_kwargs: dict = {
-                        "logGroupName": ECS_LOG_GROUP,
-                        "logStreamName": log_stream_name,
-                        "startFromHead": True,
-                        "limit": 100,
-                    }
-                    if last_timestamp:
-                        get_kwargs["startTime"] = last_timestamp + 1
+                # Validate critical log entries
+                agent_started = any(
+                    "openclaw-agent" in m.lower() and ("start" in m.lower() or "running" in m.lower())
+                    for m in all_messages
+                )
+                assert agent_started, (
+                    "FAILED: openclaw-agent startup not found in logs. "
+                    "Expected to see openclaw-agent starting in container logs."
+                )
+                print_success("openclaw-agent startup confirmed in logs")
 
-                    events_response = logs_client.get_log_events(**get_kwargs)
-                    for event in events_response["events"]:
-                        msg = event["message"]
-                        if msg not in all_messages:
-                            all_messages.append(msg)
-                            print(f"    {msg}")
-                        last_timestamp = event["timestamp"]
+                voice_connected = any(
+                    "voice-gateway" in m.lower() and ("connect" in m.lower() or "connected" in m.lower())
+                    for m in all_messages
+                )
+                assert voice_connected, (
+                    "FAILED: voice-gateway connection not found in logs. "
+                    "Expected to see openclaw-agent connecting to voice-gateway."
+                )
+                print_success("voice-gateway connection confirmed in logs")
 
-                    time.sleep(3)
-                except Exception as e:
-                    print_warning(f"Error fetching logs: {e}")
-                    time.sleep(5)
+        except ImportError:
+            pytest.skip("python-dateutil not installed — skipping log validation")
+        except Exception as e:
+            print_warning(f"Log validation error (non-fatal): {e}")
 
-            # Validate critical log entries
-            agent_started = any(
-                "openclaw-agent" in m.lower() and ("start" in m.lower() or "running" in m.lower())
-                for m in all_messages
+        print_header("Test Summary")
+        print_success(f"User: {test_email} (UUID: {user_id})")
+        print_success("Config: created and verified")
+        print_success(f"Container: {container_id}")
+        print_success("End-to-end test passed!")
+
+    finally:
+        print_header("Cleanup")
+        if container_id and api_key:
+            print_info(f"Deleting container {container_id}...")
+            resp = make_simple_request(
+                "DELETE", f"{ORCHESTRATOR_URL}/containers/{container_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
             )
-            assert agent_started, (
-                "FAILED: openclaw-agent startup not found in logs. "
-                "Expected to see openclaw-agent starting in container logs."
-            )
-            print_success("openclaw-agent startup confirmed in logs")
+            if resp.status_code in (200, 204, 404):
+                print_success("Container deleted")
+            else:
+                print_warning(f"Container delete returned {resp.status_code} — may need manual cleanup")
 
-            voice_connected = any(
-                "voice-gateway" in m.lower() and ("connect" in m.lower() or "connected" in m.lower())
-                for m in all_messages
+        if user_id and api_key:
+            print_info(f"Deleting user {user_id} ({test_email})...")
+            resp = make_simple_request(
+                "DELETE", f"{AUTH_GATEWAY_URL}/users/{user_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
             )
-            assert voice_connected, (
-                "FAILED: voice-gateway connection not found in logs. "
-                "Expected to see openclaw-agent connecting to voice-gateway."
-            )
-            print_success("voice-gateway connection confirmed in logs")
-
-    except ImportError:
-        pytest.skip("python-dateutil not installed — skipping log validation")
-    except Exception as e:
-        print_warning(f"Log validation error (non-fatal): {e}")
-
-    print_header("Test Summary")
-    print_success(f"User: {test_email} (UUID: {user_id})")
-    print_success(f"Config: created and verified")
-    print_success(f"Container: {container_id}")
-    print_success("End-to-end test passed!")
+            if resp.status_code in (200, 204, 404):
+                print_success("User deleted")
+            else:
+                print_warning(f"User delete returned {resp.status_code} — may need manual cleanup")
