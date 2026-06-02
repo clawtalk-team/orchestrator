@@ -10,6 +10,7 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -521,3 +522,44 @@ def sync_pod_status(user_id: str, container_id: str) -> Optional[Container]:
             logger.warning("k8s sync_pod_status API error: container=%s error=%s", container_id, exc)
 
     return container
+
+
+def poll_k8s_container_statuses(max_workers: int = 10) -> Dict[str, int]:
+    """Scan DynamoDB for non-terminal k8s containers and sync each pod's status.
+
+    Intended to be called by a scheduled EventBridge rule (e.g. every 60 s) so
+    that container status stays current without requiring a client GET.
+
+    Syncs are executed in parallel (up to max_workers threads) to avoid
+    sequential blocking k8s API calls exhausting the Lambda timeout when there
+    are many non-terminal containers.
+
+    Returns a summary dict with counts of containers processed / errored.
+    """
+    containers = dynamodb.get_non_terminal_k8s_containers()
+    logger.info("k8s poller: found %d non-terminal k8s containers to sync", len(containers))
+
+    processed = 0
+    errors = 0
+
+    def _sync(container):
+        sync_pod_status(container.user_id, container.container_id)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_sync, c): c for c in containers}
+        for future in as_completed(futures):
+            container = futures[future]
+            exc = future.exception()
+            if exc:
+                logger.error(
+                    "k8s poller: unhandled error syncing container=%s: %s",
+                    container.container_id,
+                    exc,
+                    exc_info=exc,
+                )
+                errors += 1
+            else:
+                processed += 1
+
+    logger.info("k8s poller: done. processed=%d errors=%d", processed, errors)
+    return {"processed": processed, "errors": errors}

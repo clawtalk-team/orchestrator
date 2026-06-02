@@ -523,3 +523,81 @@ def test_delete_container_k8s(aws_mocks):
 
     assert response.status_code == 204
     mock_api.delete_namespaced_pod.assert_called_once()
+
+
+# ── Background status poller ──────────────────────────────────────────────────
+
+def test_poll_k8s_container_statuses_syncs_all(aws_mocks):
+    """poll_k8s_container_statuses calls sync_pod_status for every non-terminal k8s container."""
+    from datetime import timezone
+
+    from app.services import dynamodb
+
+    now = datetime.now(timezone.utc)
+    for cid, status in [("oc-poll01", "PENDING"), ("oc-poll02", "RUNNING")]:
+        dynamodb.create_container(Container(
+            container_id=cid,
+            user_id="user-poll",
+            task_arn=cid,
+            status=status,
+            health_status="UNKNOWN",
+            backend="k8s",
+            created_at=now,
+            updated_at=now,
+        ))
+    # ECS container with same status — should NOT be picked up
+    dynamodb.create_container(Container(
+        container_id="oc-ecs01",
+        user_id="user-poll",
+        task_arn="oc-ecs01",
+        status="PENDING",
+        health_status="UNKNOWN",
+        backend="ecs",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    synced = []
+
+    def fake_sync(user_id, container_id):
+        synced.append(container_id)
+
+    with patch("app.services.kubernetes.sync_pod_status", side_effect=fake_sync):
+        result = k8s_service.poll_k8s_container_statuses()
+
+    assert set(synced) == {"oc-poll01", "oc-poll02"}
+    assert result["processed"] == 2
+    assert result["errors"] == 0
+
+
+def test_poll_k8s_container_statuses_tolerates_errors(aws_mocks):
+    """poll_k8s_container_statuses continues processing even if sync raises."""
+    from datetime import timezone
+
+    from app.services import dynamodb
+
+    now = datetime.now(timezone.utc)
+    for cid in ["oc-err01", "oc-err02"]:
+        dynamodb.create_container(Container(
+            container_id=cid,
+            user_id="user-err",
+            task_arn=cid,
+            status="PENDING",
+            health_status="UNKNOWN",
+            backend="k8s",
+            created_at=now,
+            updated_at=now,
+        ))
+
+    call_count = {"n": 0}
+
+    def flaky_sync(user_id, container_id):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("k8s API blip")
+
+    with patch("app.services.kubernetes.sync_pod_status", side_effect=flaky_sync):
+        result = k8s_service.poll_k8s_container_statuses()
+
+    assert result["processed"] == 1
+    assert result["errors"] == 1

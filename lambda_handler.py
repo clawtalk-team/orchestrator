@@ -8,6 +8,7 @@ from app.services.ecs import handle_task_event
 from app.services.kubernetes import (
     PROVISION_EVENT_SOURCE,
     PROVISION_EVENT_TYPE,
+    poll_k8s_container_statuses,
     provision_pod,
 )
 
@@ -23,6 +24,11 @@ def handler(event, context):
     routes async k8s pod-provision requests to provision_pod,
     and forwards API Gateway HTTP requests to the FastAPI app via Mangum.
     """
+    # EventBridge: scheduled k8s status poll (cron rule fires every 60 s)
+    if event.get("source") == "aws.events" and event.get("detail-type") == "Scheduled Event":
+        result = poll_k8s_container_statuses()
+        return {"statusCode": 200, "body": f"k8s poll complete: {result}"}
+
     # EventBridge: ECS task state changes
     if event.get("source") == "aws.ecs":
         handle_task_event(event)

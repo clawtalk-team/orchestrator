@@ -35,6 +35,32 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.ecs_task_state_change.arn
 }
 
+resource "aws_cloudwatch_event_rule" "k8s_status_poller" {
+  name                = "orchestrator-k8s-status-poller"
+  description         = "Trigger orchestrator Lambda every 60 s to sync k8s pod status into DynamoDB"
+  schedule_expression = "rate(1 minute)"
+
+  tags = {
+    Name        = "orchestrator-k8s-status-poller"
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "orchestrator_lambda_k8s_poll" {
+  rule      = aws_cloudwatch_event_rule.k8s_status_poller.name
+  target_id = "OrchestratorLambdaK8sPoll"
+  arn       = var.lambda_function_arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_k8s_poller" {
+  statement_id  = "AllowExecutionFromEventBridgeK8sPoller"
+  action        = "lambda:InvokeFunction"
+  function_name = var.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.k8s_status_poller.arn
+}
+
 # Variables
 variable "ecs_cluster_arn" {
   description = "ARN of the ECS cluster to monitor"

@@ -220,3 +220,59 @@ def test_get_running_containers(aws_mocks):
 
     assert len(result) == 1
     assert result[0].status == "RUNNING"
+
+
+def test_get_non_terminal_k8s_containers(aws_mocks):
+    """get_non_terminal_k8s_containers returns only PENDING/RUNNING k8s containers."""
+    now = datetime.utcnow()
+
+    k8s_pending = Container(
+        container_id="oc-k8s-pend",
+        user_id="user-k8s",
+        task_arn="pod-1",
+        status="PENDING",
+        health_status="UNKNOWN",
+        backend="k8s",
+        created_at=now,
+        updated_at=now,
+    )
+    k8s_running = Container(
+        container_id="oc-k8s-run",
+        user_id="user-k8s",
+        task_arn="pod-2",
+        status="RUNNING",
+        health_status="STARTING",
+        backend="k8s",
+        created_at=now,
+        updated_at=now,
+    )
+    k8s_stopped = Container(
+        container_id="oc-k8s-stop",
+        user_id="user-k8s",
+        task_arn="pod-3",
+        status="STOPPED",
+        health_status="UNKNOWN",
+        backend="k8s",
+        created_at=now,
+        updated_at=now,
+    )
+    ecs_pending = Container(
+        container_id="oc-ecs-pend",
+        user_id="user-ecs",
+        task_arn="task-1",
+        status="PENDING",
+        health_status="UNKNOWN",
+        backend="ecs",
+        created_at=now,
+        updated_at=now,
+    )
+
+    for c in [k8s_pending, k8s_running, k8s_stopped, ecs_pending]:
+        dynamodb.create_container(c)
+
+    result = dynamodb.get_non_terminal_k8s_containers()
+    ids = {c.container_id for c in result}
+
+    assert ids == {"oc-k8s-pend", "oc-k8s-run"}
+    assert all(c.backend == "k8s" for c in result)
+    assert all(c.status in ("PENDING", "RUNNING") for c in result)

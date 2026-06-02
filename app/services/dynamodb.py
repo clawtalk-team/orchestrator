@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 import boto3
+from boto3.dynamodb.conditions import Attr
 
 from app.config import get_settings
 from app.models.container import Container, HealthData
@@ -244,6 +245,36 @@ def get_running_containers() -> List[Container]:
     )
 
     return [_deserialize_container(item) for item in response.get("Items", [])]
+
+
+def get_non_terminal_k8s_containers() -> List[Container]:
+    """
+    Return all k8s-backend containers in PENDING or RUNNING state.
+
+    Used by the scheduled status-poller Lambda to drive background sync without
+    requiring a client GET.  The GSI is keyed on (user_id, status) so there is
+    no index that directly filters by backend; we scan the GSI for both
+    non-terminal statuses and discard ECS rows in Python.  At current scale
+    (hundreds of containers) this is fine; if the table grows significantly,
+    adding a backend GSI would be the right fix.
+
+    Paginates through all DynamoDB scan pages so no containers are silently
+    skipped when the result set exceeds the 1 MB page size.
+    """
+    table = _get_table()
+    filter_expr = Attr("status").is_in(["PENDING", "RUNNING"]) & Attr("backend").eq("k8s")
+
+    items: list = []
+    kwargs: dict = {"IndexName": "user_id-status-index", "FilterExpression": filter_expr}
+    while True:
+        response = table.scan(**kwargs)
+        items.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
+
+    return [_deserialize_container(item) for item in items]
 
 
 # ---------------------------------------------------------------------------
