@@ -521,3 +521,33 @@ def sync_pod_status(user_id: str, container_id: str) -> Optional[Container]:
             logger.warning("k8s sync_pod_status API error: container=%s error=%s", container_id, exc)
 
     return container
+
+
+def poll_k8s_container_statuses() -> Dict[str, int]:
+    """Scan DynamoDB for non-terminal k8s containers and sync each pod's status.
+
+    Intended to be called by a scheduled EventBridge rule (e.g. every 60 s) so
+    that container status stays current without requiring a client GET.
+
+    Returns a summary dict with counts of containers processed / updated / errored.
+    """
+    containers = dynamodb.get_non_terminal_k8s_containers()
+    logger.info("k8s poller: found %d non-terminal k8s containers to sync", len(containers))
+
+    processed = 0
+    errors = 0
+    for container in containers:
+        try:
+            sync_pod_status(container.user_id, container.container_id)
+            processed += 1
+        except Exception as exc:
+            logger.error(
+                "k8s poller: unhandled error syncing container=%s: %s",
+                container.container_id,
+                exc,
+                exc_info=True,
+            )
+            errors += 1
+
+    logger.info("k8s poller: done. processed=%d errors=%d", processed, errors)
+    return {"processed": processed, "errors": errors}

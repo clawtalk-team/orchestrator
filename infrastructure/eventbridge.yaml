@@ -68,6 +68,25 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ECSTaskStateChangeRule.Arn
 
+  K8sStatusPollerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: orchestrator-k8s-status-poller
+      Description: Trigger the orchestrator Lambda every 60 s to sync k8s pod status into DynamoDB
+      State: ENABLED
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - Id: OrchestratorLambdaK8sPoll
+          Arn: !Ref LambdaFunctionArn
+
+  K8sStatusPollerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt K8sStatusPollerRule.Arn
+
 Outputs:
   EventBridgeRuleArn:
     Description: ARN of the EventBridge rule

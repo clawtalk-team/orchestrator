@@ -165,7 +165,7 @@ When a container is created, the orchestrator:
 2. Creates a DynamoDB record for the container in `PENDING` status
 3. Launches a container (ECS task or Kubernetes Pod) with a small set of bootstrap environment variables (see below)
 
-> **Note:** `ip_address` is not required at this stage. On ECS it is populated asynchronously via an EventBridge task-state event when the task reaches `RUNNING`; on Kubernetes it is synced on the next `GET /containers/{id}` call. Its absence does not affect container functionality — the container communicates outbound via the orchestrator URL injected at launch time.
+> **Note:** `ip_address` is not required at this stage. On ECS it is populated asynchronously via an EventBridge task-state event when the task reaches `RUNNING`; on Kubernetes it is synced by a scheduled EventBridge poller (every 60 s) as well as on any `GET /containers/{id}` call. Its absence does not affect container functionality — the container communicates outbound via the orchestrator URL injected at launch time.
 
 At startup, the container's `openclaw-agent --init` fetches config from the orchestrator API, builds `~/.openclaw/openclaw.json` and `~/.clawtalk/clawtalk.json`, then starts `openclaw-agent`.
 
