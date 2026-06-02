@@ -257,13 +257,24 @@ def get_non_terminal_k8s_containers() -> List[Container]:
     non-terminal statuses and discard ECS rows in Python.  At current scale
     (hundreds of containers) this is fine; if the table grows significantly,
     adding a backend GSI would be the right fix.
+
+    Paginates through all DynamoDB scan pages so no containers are silently
+    skipped when the result set exceeds the 1 MB page size.
     """
     table = _get_table()
-    response = table.scan(
-        IndexName="user_id-status-index",
-        FilterExpression=Attr("status").is_in(["PENDING", "RUNNING"]) & Attr("backend").eq("k8s"),
-    )
-    return [_deserialize_container(item) for item in response.get("Items", [])]
+    filter_expr = Attr("status").is_in(["PENDING", "RUNNING"]) & Attr("backend").eq("k8s")
+
+    items: list = []
+    kwargs: dict = {"IndexName": "user_id-status-index", "FilterExpression": filter_expr}
+    while True:
+        response = table.scan(**kwargs)
+        items.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
+
+    return [_deserialize_container(item) for item in items]
 
 
 # ---------------------------------------------------------------------------
