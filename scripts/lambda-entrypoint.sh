@@ -41,7 +41,7 @@ try:
                     "reusable":      False,
                     "ephemeral":     True,
                     "preauthorized": True,
-                    "tags":          ["tag:voxhelm"],
+                    "tags":          ["tag:orchestrator"],
                 }
             }
         },

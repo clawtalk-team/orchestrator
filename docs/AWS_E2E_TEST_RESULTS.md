@@ -253,7 +253,7 @@ Container ID: oc-test-e2e-aws-001
 ## How to Run This Test
 
 ```bash
-cd /Users/andrewsinclair/workspace/clawtalk/orchestrator
+cd /path/to/orchestrator
 
 # Ensure .env has ANTHROPIC_API_KEY
 cat .env | grep ANTHROPIC_API_KEY

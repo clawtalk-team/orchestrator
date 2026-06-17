@@ -220,7 +220,7 @@ The Lambda does **not** store a long-lived auth key. On every cold-start, `scrip
 
 > **Important:** Tailscale will not work in a new environment until all of these steps are completed. The Lambda starts without Tailscale if the SSM parameter is missing or invalid.
 
-1. **Declare the tag** in your tailnet ACL (one-time per tailnet — skip if `tag:voxhelm` already exists):
+1. **Declare the tag** in your tailnet ACL (one-time per tailnet — skip if `tag:orchestrator` already exists):
    - Tailscale Admin Console → **Access Controls** → add to `tagOwners` (see below)
 2. **Generate a personal API key** (Settings → Keys, set max 90-day expiry)
 3. **Store it in SSM:**
@@ -243,7 +243,7 @@ In the [Tailscale Admin Console](https://login.tailscale.com/admin/acls) → **A
 {
   "tagOwners": {
     // existing tags...
-    "tag:voxhelm": ["autogroup:admin"]
+    "tag:orchestrator": ["autogroup:admin"]
   },
   "acls": [
     // existing rules...
@@ -251,7 +251,7 @@ In the [Tailscale Admin Console](https://login.tailscale.com/admin/acls) → **A
       // Allow Lambda nodes to initiate connections to any tailnet host.
       // Tighten the dst list once you know the exact services to reach.
       "action": "accept",
-      "src":    ["tag:voxhelm"],
+      "src":    ["tag:orchestrator"],
       "dst":    ["*:*"]
     }
   ]
@@ -333,7 +333,7 @@ Expected output on a successful cold-start:
 [tailscale] connected to tailnet
 ```
 
-The node will appear in your Tailscale Admin Console device list tagged as `tag:voxhelm`. It disappears automatically when the Lambda execution environment is recycled.
+The node will appear in your Tailscale Admin Console device list tagged as `tag:orchestrator`. It disappears automatically when the Lambda execution environment is recycled.
 
 ---
 
