@@ -9,11 +9,11 @@ echo "======================================"
 echo ""
 
 # Configuration from docker-compose.yml and .env
-AUTH_GATEWAY_URL="${AUTH_GATEWAY_URL:-https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com}"
+AUTH_GATEWAY_URL="${AUTH_GATEWAY_URL:-https://your-auth-gateway.execute-api.your-region.amazonaws.com}"
 AUTH_GATEWAY_API_KEY="${AUTH_GATEWAY_API_KEY?'AUTH_GATEWAY_API_KEY not set'}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY?'ANTHROPIC_API_KEY not set'}"
 OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-test-token-123}"
-VOICE_GATEWAY_URL="http://voice-gateway-dev-544339776.ap-southeast-2.elb.amazonaws.com"
+VOICE_GATEWAY_URL="http://your-voice-gateway.your-region.elb.amazonaws.com"
 DYNAMODB_TABLE="openclaw-containers"
 DYNAMODB_REGION="ap-southeast-2"
 
@@ -135,7 +135,7 @@ if [ -n "$CONTAINER_ID" ]; then
     echo "     -H 'Authorization: Bearer $AUTH_GATEWAY_API_KEY'"
     echo ""
     echo "3. If using ECS, check task in AWS console:"
-    echo "   https://console.aws.amazon.com/ecs/v2/clusters/clawtalk-dev/tasks"
+    echo "   https://console.aws.amazon.com/ecs/v2/clusters/your-cluster/tasks"
     echo ""
 else
     echo "✗ Container creation failed"

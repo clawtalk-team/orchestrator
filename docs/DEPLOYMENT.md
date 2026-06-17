@@ -2,10 +2,10 @@
 
 ## Prerequisites
 
-- AWS CLI configured with `--profile personal`
+- AWS CLI configured with `--profile default`
 - Docker with ARM64 support (for Lambda)
 - Terraform 1.5+
-- Access to ECR repository: `826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator`
+- Access to ECR repository: `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator`
 
 ## Build & Deploy
 
@@ -21,16 +21,16 @@ docker buildx build \
   --platform linux/arm64 \
   --build-arg GIT_COMMIT=${IMAGE_TAG} \
   -f Dockerfile.lambda \
-  -t 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest \
+  -t 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest \
   .
 
 # Login to ECR
-aws --profile personal ecr get-login-password --region ap-southeast-2 | \
+aws --profile default ecr get-login-password --region ap-southeast-2 | \
   docker login --username AWS --password-stdin \
-  826182175287.dkr.ecr.ap-southeast-2.amazonaws.com
+  123456789012.dkr.ecr.ap-southeast-2.amazonaws.com
 
 # Push image
-docker push 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
+docker push 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
 ```
 
 ### 2. Deploy Infrastructure
@@ -73,14 +73,14 @@ curl -X POST $(terraform output -raw orchestrator_url)/containers \
 IMAGE_TAG=$(git rev-parse --short HEAD)
 docker buildx build --provenance=false --sbom=false --load --platform linux/arm64 \
   --build-arg GIT_COMMIT=${IMAGE_TAG} -f Dockerfile.lambda \
-  -t 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest .
-docker push 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
+  -t 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest .
+docker push 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
 
 # Update Lambda function
-aws --profile personal lambda update-function-code \
+aws --profile default lambda update-function-code \
   --function-name orchestrator-dev \
   --region ap-southeast-2 \
-  --image-uri 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
+  --image-uri 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest
 ```
 
 ### Update Infrastructure
@@ -96,13 +96,13 @@ terraform apply -auto-approve -var="orchestrator_image_tag=dev-latest"
 
 ```bash
 # Tail recent logs
-aws --profile personal logs tail /aws/lambda/orchestrator-dev \
+aws --profile default logs tail /aws/lambda/orchestrator-dev \
   --region ap-southeast-2 \
   --since 10m \
   --follow
 
 # Filter for errors
-aws --profile personal logs tail /aws/lambda/orchestrator-dev \
+aws --profile default logs tail /aws/lambda/orchestrator-dev \
   --region ap-southeast-2 \
   --since 1h \
   --filter-pattern "ERROR"
@@ -113,12 +113,12 @@ aws --profile personal logs tail /aws/lambda/orchestrator-dev \
 ```bash
 # Get container details from API
 CONTAINER_ID="{CONTAINER_ID}"
-curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/${CONTAINER_ID} \
+curl https://your-api-id.execute-api.your-region.amazonaws.com/containers/${CONTAINER_ID} \
   -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 
 # Get task ARN from DynamoDB
 USER_ID="{USER_ID}"
-TASK_ARN=$(aws --profile personal dynamodb get-item \
+TASK_ARN=$(aws --profile default dynamodb get-item \
   --table-name openclaw-containers-dev \
   --region ap-southeast-2 \
   --key '{"pk":{"S":"USER#'${USER_ID}'"},"sk":{"S":"CONTAINER#'${CONTAINER_ID}'"}}' \
@@ -129,14 +129,14 @@ TASK_ARN=$(aws --profile personal dynamodb get-item \
 TASK_ID=$(echo $TASK_ARN | rev | cut -d'/' -f1 | rev)
 
 # View container logs (openclaw-agent)
-aws --profile personal logs tail /ecs/openclaw-agent-dev \
+aws --profile default logs tail /ecs/openclaw-agent-dev \
   --region ap-southeast-2 \
   --since 30m \
   --format short \
   --filter-pattern "$TASK_ID"
 
 # Follow logs in real-time
-aws --profile personal logs tail /ecs/openclaw-agent-dev \
+aws --profile default logs tail /ecs/openclaw-agent-dev \
   --region ap-southeast-2 \
   --follow \
   --format short
@@ -146,14 +146,14 @@ aws --profile personal logs tail /ecs/openclaw-agent-dev \
 
 ```bash
 # List running tasks
-aws --profile personal ecs list-tasks \
-  --cluster clawtalk-dev \
+aws --profile default ecs list-tasks \
+  --cluster your-cluster \
   --region ap-southeast-2 \
   --desired-status RUNNING
 
 # Describe specific task
-aws --profile personal ecs describe-tasks \
-  --cluster clawtalk-dev \
+aws --profile default ecs describe-tasks \
+  --cluster your-cluster \
   --region ap-southeast-2 \
   --tasks $TASK_ARN \
   --query 'tasks[0].{status:lastStatus,ip:containers[0].networkInterfaces[0].privateIpv4Address}'
@@ -163,12 +163,12 @@ aws --profile personal ecs describe-tasks \
 
 ```bash
 # Scan all containers
-aws --profile personal dynamodb scan \
+aws --profile default dynamodb scan \
   --table-name openclaw-containers-dev \
   --region ap-southeast-2
 
 # Get specific container
-aws --profile personal dynamodb get-item \
+aws --profile default dynamodb get-item \
   --table-name openclaw-containers-dev \
   --region ap-southeast-2 \
   --key '{"pk":{"S":"USER#{USER_ID}"},"sk":{"S":"CONTAINER#{CONTAINER_ID}"}}'
@@ -184,7 +184,7 @@ If you see "Permission denied" errors, rebuild the Docker image with correct per
 # Dockerfile.lambda includes: RUN chmod -R 755 ${LAMBDA_TASK_ROOT}
 docker buildx build --provenance=false --sbom=false --load --platform linux/arm64 \
   -f Dockerfile.lambda \
-  -t 826182175287.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest .
+  -t 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator:dev-latest .
 ```
 
 ### ECS Task Won't Start
@@ -193,7 +193,7 @@ Check IAM permissions and network configuration:
 
 ```bash
 # Verify subnet/security group IDs in Lambda env vars
-aws --profile personal lambda get-function-configuration \
+aws --profile default lambda get-function-configuration \
   --function-name orchestrator-dev \
   --region ap-southeast-2 \
   --query 'Environment.Variables.{subnets:ECS_SUBNETS,sgs:ECS_SECURITY_GROUPS}'
@@ -225,7 +225,7 @@ The Lambda does **not** store a long-lived auth key. On every cold-start, `scrip
 2. **Generate a personal API key** (Settings → Keys, set max 90-day expiry)
 3. **Store it in SSM:**
    ```bash
-   aws --profile personal ssm put-parameter \
+   aws --profile default ssm put-parameter \
      --region ap-southeast-2 \
      --name "/clawtalk/orchestrator/<env>/tailscale/api-key" \
      --type SecureString \
@@ -267,7 +267,7 @@ In the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys
 ### Step 3 — Store the key in SSM
 
 ```bash
-aws --profile personal ssm put-parameter \
+aws --profile default ssm put-parameter \
   --region ap-southeast-2 \
   --name "/clawtalk/orchestrator/dev/tailscale/api-key" \
   --type SecureString \
@@ -304,7 +304,7 @@ After `apply`, Terraform outputs:
 When your personal API key approaches expiry, generate a new one in the Tailscale Admin Console and update SSM:
 
 ```bash
-aws --profile personal ssm put-parameter \
+aws --profile default ssm put-parameter \
   --region ap-southeast-2 \
   --name "/clawtalk/orchestrator/dev/tailscale/api-key" \
   --type SecureString \
@@ -319,7 +319,7 @@ No Terraform apply or Lambda redeployment required. The next cold-start picks up
 After deploying, invoke the Lambda and check CloudWatch Logs for the Tailscale startup messages:
 
 ```bash
-aws --profile personal logs tail /aws/lambda/orchestrator-dev \
+aws --profile default logs tail /aws/lambda/orchestrator-dev \
   --region ap-southeast-2 \
   --since 5m \
   --filter-pattern "[tailscale]"
@@ -341,9 +341,9 @@ The node will appear in your Tailscale Admin Console device list tagged as `tag:
 
 ```bash
 # Delete all containers (via API)
-for id in $(curl -s https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers \
+for id in $(curl -s https://your-api-id.execute-api.your-region.amazonaws.com/containers \
   -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}" | jq -r '.[].container_id'); do
-  curl -X DELETE https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/$id \
+  curl -X DELETE https://your-api-id.execute-api.your-region.amazonaws.com/containers/$id \
     -H "Authorization: Bearer {USER_ID}:{YOUR_TOKEN}"
 done
 

@@ -46,7 +46,7 @@ API_KEY="$USER_ID:test-token-xyz-789"
 
 # AWS Configuration
 AWS_REGION="${AWS_REGION:-ap-southeast-2}"
-export AWS_PROFILE="${AWS_PROFILE:-personal}"
+export AWS_PROFILE="${AWS_PROFILE:-default}"
 DYNAMODB_TABLE="${DYNAMODB_TABLE:-openclaw-containers}"
 
 # Test mode: "local-with-aws" or "ecs"

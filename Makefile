@@ -5,7 +5,7 @@
 # AWS / deployment settings
 SERVICE       := orchestrator
 ENV           ?= dev
-AWS_PROFILE   ?= personal
+AWS_PROFILE   ?= default
 AWS_REGION    ?= ap-southeast-2
 ECR_REPO_NAME ?= orchestrator
 IMAGE_TAG     ?= $(shell git rev-parse --short HEAD)
