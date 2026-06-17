@@ -16,8 +16,8 @@ Environment variables required:
 Optional overrides:
   AUTH_GATEWAY_URL    Auth gateway Lambda URL
   ORCHESTRATOR_URL    Orchestrator Lambda URL
-  ECS_CLUSTER_NAME    ECS cluster (default: clawtalk-dev)
-  AWS_PROFILE         AWS profile (default: personal)
+  ECS_CLUSTER_NAME    ECS cluster (default: your-cluster)
+  AWS_PROFILE         AWS profile for AWS CLI
 
 Run:
   E2E_TESTS=1 OPENROUTER_API_KEY=sk-or-... pytest tests/e2e/test_end_to_end_flow.py -v
@@ -43,17 +43,17 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 AUTH_GATEWAY_URL = os.getenv(
-    "AUTH_GATEWAY_URL", "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com"
+    "AUTH_GATEWAY_URL", "https://your-auth-gateway.execute-api.your-region.amazonaws.com"
 )
 ORCHESTRATOR_URL = os.getenv(
-    "ORCHESTRATOR_URL", "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com"
+    "ORCHESTRATOR_URL", "https://your-api-id.execute-api.your-region.amazonaws.com"
 )
 DYNAMODB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT")
 DYNAMODB_TABLE = os.getenv("CONTAINERS_TABLE", "openclaw-containers-dev")
 DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "ap-southeast-2")
-ECS_CLUSTER_NAME = os.getenv("ECS_CLUSTER_NAME", "clawtalk-dev")
+ECS_CLUSTER_NAME = os.getenv("ECS_CLUSTER_NAME", "your-cluster")
 ECS_LOG_GROUP = os.getenv("ECS_LOG_GROUP", "/ecs/openclaw-agent-dev")
-AWS_PROFILE = os.getenv("AWS_PROFILE", "personal")
+AWS_PROFILE = os.getenv("AWS_PROFILE", "default")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "ap-southeast-2")
 
 # ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ def test_end_to_end_flow():
                 "auth_gateway_url": AUTH_GATEWAY_URL,
                 "openclaw_url": "http://localhost:18789",
                 "openclaw_token": "test-token-123",
-                "voice_gateway_url": "ws://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
+                "voice_gateway_url": "ws://your-voice-gateway.your-region.elb.amazonaws.com",
             },
         )
         assert response.status_code == 200, f"Failed to write config: {response.status_code} {response.text}"

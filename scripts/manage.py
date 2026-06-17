@@ -31,7 +31,7 @@ Groups and commands:
 
 Common options (most commands):
   --env ENV             Environment: dev or prod (default: dev)
-  --profile PROFILE     AWS profile name (default: personal)
+  --profile PROFILE     AWS profile name (default: default)
   --region REGION       AWS region (default: ap-southeast-2)
   --cluster CLUSTER     ECS cluster name (default: clawtalk-{env})
 
@@ -137,7 +137,7 @@ def _fetch_user_email_map(dynamodb, env: str) -> dict:
 
 COMMON_ARGS = [
     (["--env"], {"default": "dev", "metavar": "ENV", "help": "Environment: dev or prod (default: dev)"}),
-    (["--profile"], {"default": "personal", "metavar": "PROFILE", "help": "AWS profile name (default: personal)"}),
+    (["--profile"], {"default": "default", "metavar": "PROFILE", "help": "AWS profile name (default: default)"}),
     (["--region"], {"default": "ap-southeast-2", "metavar": "REGION", "help": "AWS region (default: ap-southeast-2)"}),
     (["--cluster"], {"default": None, "metavar": "CLUSTER", "help": "ECS cluster name (default: clawtalk-{env})"}),
 ]
@@ -253,7 +253,7 @@ def _resolve_k8s_args(args) -> tuple[str, str, str]:
     """
     kubeconfig_ssm = getattr(args, "kubeconfig_ssm_path", None)
     if kubeconfig_ssm:
-        profile = getattr(args, "profile", "personal")
+        profile = getattr(args, "profile", "default")
         region = getattr(args, "region", "ap-southeast-2")
         kubeconfig = _fetch_kubeconfig_ssm(profile, region, kubeconfig_ssm)
     else:
@@ -344,7 +344,7 @@ def cmd_containers_launch(args) -> int:
         base_url = "http://localhost:8000"
     else:
         urls = {
-            "dev": "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com",
+            "dev": "https://your-api-id.execute-api.your-region.amazonaws.com",
             "prod": "https://api.openclaw.ai",
         }
         base_url = urls.get(args.env, urls["dev"])
@@ -1758,7 +1758,7 @@ def cmd_verify(args) -> int:
         results.append(False)
 
     # Auth gateway
-    auth_url = os.getenv("AUTH_GATEWAY_URL", "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com")
+    auth_url = os.getenv("AUTH_GATEWAY_URL", "https://your-auth-gateway.execute-api.your-region.amazonaws.com")
     print(f"\nChecking: Auth Gateway ({auth_url})")
     try:
         response = requests.get(f"{auth_url}/health", timeout=10)
@@ -1770,7 +1770,7 @@ def cmd_verify(args) -> int:
         results.append(False)
 
     # Orchestrator
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com")
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "https://your-api-id.execute-api.your-region.amazonaws.com")
     print(f"\nChecking: Orchestrator ({orchestrator_url})")
     try:
         response = requests.get(f"{orchestrator_url}/health", timeout=10)
@@ -1795,7 +1795,7 @@ def cmd_verify(args) -> int:
         results.append(False)
 
     # ECS cluster
-    cluster_name = os.getenv("ECS_CLUSTER_NAME", "clawtalk-dev")
+    cluster_name = os.getenv("ECS_CLUSTER_NAME", "your-cluster")
     print(f"\nChecking: ECS Cluster ({cluster_name})")
     try:
         ecs = session.client("ecs")
@@ -2295,14 +2295,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="DynamoDB table name (default: openclaw-containers)")
     # System config values
     p.add_argument("--auth-gateway-url",
-                   default="https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
+                   default="https://your-auth-gateway.execute-api.your-region.amazonaws.com",
                    metavar="URL", help="Auth gateway URL")
     p.add_argument("--openclaw-url", default="http://localhost:18789",
                    metavar="URL", help="OpenClaw URL")
     p.add_argument("--openclaw-token", default="test-token-123",
                    metavar="TOKEN", help="OpenClaw token")
     p.add_argument("--voice-gateway-url",
-                   default="http://voice-gateway-dev-59337216.ap-southeast-2.elb.amazonaws.com",
+                   default="http://your-voice-gateway.your-region.elb.amazonaws.com",
                    metavar="URL", help="Voice gateway URL")
     # User config values
     p.add_argument("--config-name", default="default", metavar="NAME",
@@ -2379,8 +2379,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  manage.py verify --profile prod --region us-east-1"
         ),
     )
-    p.add_argument("--profile", default="personal", metavar="PROFILE",
-                   help="AWS profile name (default: personal)")
+    p.add_argument("--profile", default="default", metavar="PROFILE",
+                   help="AWS profile name (default: default)")
     p.add_argument("--region", default="ap-southeast-2", metavar="REGION",
                    help="AWS region (default: ap-southeast-2)")
     p.set_defaults(func=cmd_verify)

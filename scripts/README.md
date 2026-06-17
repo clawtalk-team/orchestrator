@@ -71,7 +71,7 @@ python scripts/list_containers.py --env prod
 **Options:**
 - `--env` - Environment (dev/prod), default: dev
 - `--user-id` - Filter by specific user ID
-- `--profile` - AWS profile name, default: personal
+- `--profile` - AWS profile name, default: default
 - `--region` - AWS region, default: ap-southeast-2
 
 ### 3. List ECS Tasks
@@ -88,9 +88,9 @@ python scripts/list_ecs_tasks.py --env prod
 
 **Options:**
 - `--env` - Environment (dev/prod), default: dev
-- `--profile` - AWS profile name, default: personal
+- `--profile` - AWS profile name, default: default
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: clawtalk-dev
+- `--cluster` - ECS cluster name, default: your-cluster
 
 ### 4. Get Logs
 
@@ -116,7 +116,7 @@ python scripts/get_logs.py oc-abc12345 --user-id USER_123 --since 60
 - `--env` - Environment (dev/prod), default: dev
 - `--follow` / `-f` - Follow logs in real-time
 - `--since` - Show logs from last N minutes, default: 30
-- `--profile` - AWS profile name, default: personal
+- `--profile` - AWS profile name, default: default
 - `--region` - AWS region, default: ap-southeast-2
 
 ### 5. Execute Shell
@@ -139,9 +139,9 @@ python scripts/exec_shell.py oc-abc12345 --user-id USER_123 --command "ls -la"
 - `--task-arn` - Task ARN (alternative to container ID)
 - `--env` - Environment (dev/prod), default: dev
 - `--command` - Command to execute, default: /bin/bash
-- `--profile` - AWS profile name, default: personal
+- `--profile` - AWS profile name, default: default
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: clawtalk-dev
+- `--cluster` - ECS cluster name, default: your-cluster
 - `--container` - Container name, default: openclaw-agent
 
 **Prerequisites:**
@@ -179,9 +179,9 @@ python scripts/delete_containers.py oc-abc12345 --user-id USER_123 --yes
 - `--env` - Environment (dev/prod), default: dev
 - `--dry-run` - Show what would be deleted without deleting
 - `--yes` / `-y` - Skip confirmation prompt
-- `--profile` - AWS profile name, default: personal
+- `--profile` - AWS profile name, default: default
 - `--region` - AWS region, default: ap-southeast-2
-- `--cluster` - ECS cluster name, default: clawtalk-dev
+- `--cluster` - ECS cluster name, default: your-cluster
 
 ## Common Workflows
 
@@ -252,7 +252,7 @@ Single entry point for interrogating and cleaning up ECS tasks. Replaces `list_e
 **Common options (all subcommands):**
 - `--env` - Environment (dev/prod), default: dev
 - `--cluster` - ECS cluster name (default: clawtalk-{env})
-- `--profile` - AWS profile, default: personal
+- `--profile` - AWS profile, default: default
 - `--region` - AWS region, default: ap-southeast-2
 
 #### `list` — show all tasks in the cluster
@@ -349,7 +349,7 @@ python scripts/load_defaults.py --system
 
 # Load system + user defaults
 python scripts/load_defaults.py --system --user-id YOUR_USER_ID \
-  --auth-gateway-url https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com \
+  --auth-gateway-url https://your-auth-gateway.execute-api.your-region.amazonaws.com \
   --openclaw-url http://localhost:18789 \
   --openclaw-token test-token-123 \
   --llm-provider anthropic \
@@ -373,7 +373,7 @@ python scripts/load_defaults.py --verify --user-id YOUR_USER_ID
 - `--anthropic-api-key` / `--openai-api-key` / `--openrouter-api-key` - Provider keys
 - `--verify` - Print existing configs without writing
 - `--env` - Environment (dev/prod), default: dev
-- `--profile` - AWS profile, default: personal
+- `--profile` - AWS profile, default: default
 - `--region` - AWS region, default: ap-southeast-2
 
 ### 11. Verify AWS Config
@@ -440,16 +440,16 @@ End-to-end test script that demonstrates the complete user-to-container provisio
 
 ```bash
 # AWS Configuration (all services in AWS)
-export AWS_PROFILE=personal
+export AWS_PROFILE=default
 export AWS_DEFAULT_REGION=ap-southeast-2
 
 # Run with AWS Lambda endpoints
 python scripts/test_end_to_end_flow.py
 
 # Or with explicit configuration
-AUTH_GATEWAY_URL=https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com \
-ORCHESTRATOR_URL=https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com \
-AWS_PROFILE=personal \
+AUTH_GATEWAY_URL=https://your-auth-gateway.execute-api.your-region.amazonaws.com \
+ORCHESTRATOR_URL=https://your-api-id.execute-api.your-region.amazonaws.com \
+AWS_PROFILE=default \
 python scripts/test_end_to_end_flow.py
 ```
 
@@ -477,7 +477,7 @@ python scripts/test_end_to_end_flow.py
 - `ORCHESTRATOR_URL` - Orchestrator Lambda URL (default: AWS Lambda endpoint)
 - `DYNAMODB_TABLE` - DynamoDB table name (default: openclaw-containers)
 - `DYNAMODB_REGION` - AWS region (default: ap-southeast-2)
-- `AWS_PROFILE` - AWS CLI profile to use (default: personal)
+- `AWS_PROFILE` - AWS CLI profile to use (default: default)
 - `AWS_DEFAULT_REGION` - AWS region (default: ap-southeast-2)
 - `AWS_ACCESS_KEY_ID` - Explicit AWS credentials (optional, uses profile if not set)
 - `AWS_SECRET_ACCESS_KEY` - Explicit AWS credentials (optional, uses profile if not set)

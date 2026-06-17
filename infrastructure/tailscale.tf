@@ -19,7 +19,7 @@
 #     change or deployment is required.
 #
 # New environment checklist (see docs/DEPLOYMENT.md#tailscale-setup):
-#   1. Ensure "tag:voxhelm" exists in your tailnet ACL tagOwners
+#   1. Ensure "tag:orchestrator" exists in your tailnet ACL tagOwners
 #   2. Generate a Tailscale API key (Settings → Keys, set max 90-day expiry)
 #   3. Run: aws ssm put-parameter --name <path> --type SecureString --value <key>
 #   4. Apply this module (creates the SSM slot if it doesn't exist yet)

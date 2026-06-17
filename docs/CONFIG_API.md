@@ -36,7 +36,7 @@ System configs are shared across all users and define infrastructure settings.
 
 | Parameter | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `auth_gateway_url` | string | Yes | Auth gateway endpoint URL | `https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com` |
+| `auth_gateway_url` | string | Yes | Auth gateway endpoint URL | `https://your-auth-gateway.execute-api.your-region.amazonaws.com` |
 | `openclaw_url` | string | Yes | OpenClaw gateway URL | `http://localhost:18789` |
 | `openclaw_token` | string | Yes | Shared OpenClaw service token | `test-token-123` |
 | `voice_gateway_url` | string | No | Voice gateway WebSocket URL | `ws://localhost:9090` |
@@ -256,7 +256,7 @@ Authorization: Bearer {ADMIN_TOKEN}
 **Response:**
 ```json
 {
-  "auth_gateway_url": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
+  "auth_gateway_url": "https://your-auth-gateway.execute-api.your-region.amazonaws.com",
   "openclaw_url": "http://localhost:18789",
   "openclaw_token": "test-token-123",
   "voice_gateway_url": "ws://localhost:9090",
@@ -311,11 +311,11 @@ Content-Type: application/json
 #### 1. Initialize System Configuration (Admin)
 
 ```bash
-curl -X PUT https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/config/system \
+curl -X PUT https://your-api-id.execute-api.your-region.amazonaws.com/config/system \
   -H "Authorization: Bearer {ADMIN_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "auth_gateway_url": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
+    "auth_gateway_url": "https://your-auth-gateway.execute-api.your-region.amazonaws.com",
     "openclaw_url": "http://localhost:18789",
     "openclaw_token": "test-token-123",
     "voice_gateway_url": "ws://localhost:9090"
@@ -325,7 +325,7 @@ curl -X PUT https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/config/s
 #### 2. Create User Configuration
 
 ```bash
-curl -X POST https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/config \
+curl -X POST https://your-api-id.execute-api.your-region.amazonaws.com/config \
   -H "Authorization: Bearer {USER_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -340,7 +340,7 @@ curl -X POST https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/config 
 #### 3. Create Container Using Config
 
 ```bash
-curl -X POST https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers \
+curl -X POST https://your-api-id.execute-api.your-region.amazonaws.com/containers \
   -H "Authorization: Bearer {USER_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -418,7 +418,7 @@ When a container is created, configs are merged as follows:
 ```python
 # 1. Load system config (infrastructure)
 system_config = {
-    "auth_gateway_url": "https://z1fm1cdkph...",
+    "auth_gateway_url": "https://your-auth-gateway...",
     "openclaw_url": "http://localhost:18789",
     "openclaw_token": "test-token-123"
 }
@@ -434,7 +434,7 @@ user_config = {
 # 3. Merge with user values taking precedence
 final_config = {
     # From system config
-    "auth_gateway_url": "https://z1fm1cdkph...",
+    "auth_gateway_url": "https://your-auth-gateway...",
     "openclaw_url": "http://localhost:18789",
     "openclaw_token": "test-token-123",
 

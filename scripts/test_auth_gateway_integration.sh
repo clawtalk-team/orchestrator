@@ -9,7 +9,7 @@ echo "======================================"
 echo ""
 
 # Configuration
-AUTH_GATEWAY_URL="${AUTH_GATEWAY_URL:-https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com}"
+AUTH_GATEWAY_URL="${AUTH_GATEWAY_URL:-https://your-auth-gateway.execute-api.your-region.amazonaws.com}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:8000}"
 
 echo "Testing auth-gateway at: $AUTH_GATEWAY_URL"

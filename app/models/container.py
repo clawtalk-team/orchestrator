@@ -135,7 +135,7 @@ class ContainerResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "container_id": "cnt-abc123def456",
-                "task_arn": "arn:aws:ecs:ap-southeast-2:826182175287:task/clawtalk-dev/abc123",
+                "task_arn": "arn:aws:ecs:us-east-1:123456789012:task/your-cluster/abc123",
                 "status": "RUNNING",
                 "ip_address": "10.0.1.42",
                 "health_status": "HEALTHY",

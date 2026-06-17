@@ -15,7 +15,7 @@ Orchestrator (Lambda)
     ↓
 DynamoDB (openclaw-containers table)
     ↓
-ECS Fargate (clawtalk-dev cluster)
+ECS Fargate (your-cluster cluster)
     ↓
 Container (openclaw-agent)
 ```
@@ -24,10 +24,10 @@ Container (openclaw-agent)
 
 | Service | Type | Endpoint/Name |
 |---------|------|---------------|
-| Auth Gateway | Lambda | `https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com` |
-| Orchestrator | Lambda | `https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com` |
+| Auth Gateway | Lambda | `https://your-auth-gateway.execute-api.your-region.amazonaws.com` |
+| Orchestrator | Lambda | `https://your-api-id.execute-api.your-region.amazonaws.com` |
 | DynamoDB | Table | `openclaw-containers` in `ap-southeast-2` |
-| ECS | Fargate | Cluster: `clawtalk-dev`, Task Def: `openclaw-agent-dev` |
+| ECS | Fargate | Cluster: `your-cluster`, Task Def: `openclaw-agent-dev` |
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ Ensure you have AWS credentials configured:
 
 ```bash
 # Option 1: Use AWS CLI profile
-export AWS_PROFILE=personal
+export AWS_PROFILE=default
 aws sts get-caller-identity  # Verify credentials work
 
 # Option 2: Use explicit credentials
@@ -71,12 +71,12 @@ Create a `.env` file or export these:
 
 ```bash
 # AWS Configuration (required)
-export AWS_PROFILE=personal
+export AWS_PROFILE=default
 export AWS_DEFAULT_REGION=ap-southeast-2
 
 # Service URLs (defaults to AWS endpoints)
-export AUTH_GATEWAY_URL=https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com
-export ORCHESTRATOR_URL=https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com
+export AUTH_GATEWAY_URL=https://your-auth-gateway.execute-api.your-region.amazonaws.com
+export ORCHESTRATOR_URL=https://your-api-id.execute-api.your-region.amazonaws.com
 
 # DynamoDB Configuration
 export CONTAINERS_TABLE=openclaw-containers
@@ -84,7 +84,7 @@ export DYNAMODB_REGION=ap-southeast-2
 # DO NOT set DYNAMODB_ENDPOINT - let boto3 use real AWS
 
 # Optional: Override ECS cluster
-export ECS_CLUSTER_NAME=clawtalk-dev
+export ECS_CLUSTER_NAME=your-cluster
 export ECS_TASK_DEFINITION=openclaw-agent-dev
 ```
 
@@ -98,13 +98,13 @@ aws sts get-caller-identity
 aws dynamodb describe-table --table-name openclaw-containers
 
 # Check ECS cluster
-aws ecs describe-clusters --clusters clawtalk-dev
+aws ecs describe-clusters --clusters your-cluster
 
 # Test auth-gateway
-curl https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com/health
+curl https://your-auth-gateway.execute-api.your-region.amazonaws.com/health
 
 # Test orchestrator
-curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/health
+curl https://your-api-id.execute-api.your-region.amazonaws.com/health
 ```
 
 ## Running the Test
@@ -168,17 +168,17 @@ End-to-End Container Provisioning Test
 
 Environment Variables:
 {
-  "AUTH_GATEWAY_URL": "https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com",
-  "ORCHESTRATOR_URL": "https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com",
+  "AUTH_GATEWAY_URL": "https://your-auth-gateway.execute-api.your-region.amazonaws.com",
+  "ORCHESTRATOR_URL": "https://your-api-id.execute-api.your-region.amazonaws.com",
   "DYNAMODB_ENDPOINT": "(AWS - no endpoint)",
   "DYNAMODB_TABLE": "openclaw-containers",
   "DYNAMODB_REGION": "ap-southeast-2",
-  "AWS_PROFILE": "personal",
+  "AWS_PROFILE": "default",
   "AWS_REGION": "ap-southeast-2"
 }
 
 [Step 1] Create user in auth-gateway
-→ POST https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com/users
+→ POST https://your-auth-gateway.execute-api.your-region.amazonaws.com/users
 ...
 ✓ User created successfully
 ℹ User ID (UUID): abc123-def456-...
@@ -189,7 +189,7 @@ Environment Variables:
 ✓ API key validated
 
 [Step 3] Create container via orchestrator
-→ POST https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers
+→ POST https://your-api-id.execute-api.your-region.amazonaws.com/containers
 ...
 ✓ Container creation initiated
 ℹ Container ID: oc-a1b2c3d4
@@ -224,10 +224,10 @@ Test Summary
 ℹ Container status: RUNNING
 
 AWS Resources Used:
-  • Auth Gateway:  https://z1fm1cdkph...
-  • Orchestrator:  https://prz6mum7c7...
+  • Auth Gateway:  https://your-auth-gateway...
+  • Orchestrator:  https://your-api-id...
   • DynamoDB:      openclaw-containers (region: ap-southeast-2)
-  • ECS Cluster:   clawtalk-dev
+  • ECS Cluster:   your-cluster
   • Container:     oc-a1b2c3d4
 
 ✓ Test completed successfully!
@@ -247,19 +247,19 @@ aws dynamodb list-tables
 
 Check auth-gateway is accessible:
 ```bash
-curl https://z1fm1cdkph.execute-api.ap-southeast-2.amazonaws.com/health
+curl https://your-auth-gateway.execute-api.your-region.amazonaws.com/health
 ```
 
 ### "Failed to create container"
 
 1. Check orchestrator is accessible:
 ```bash
-curl https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/health
+curl https://your-api-id.execute-api.your-region.amazonaws.com/health
 ```
 
 2. Check ECS cluster exists:
 ```bash
-aws ecs describe-clusters --clusters clawtalk-dev
+aws ecs describe-clusters --clusters your-cluster
 ```
 
 3. Check task definition:
@@ -271,8 +271,8 @@ aws ecs describe-task-definition --task-definition openclaw-agent-dev
 
 1. Check ECS task status:
 ```bash
-aws ecs list-tasks --cluster clawtalk-dev
-aws ecs describe-tasks --cluster clawtalk-dev --tasks <task-arn>
+aws ecs list-tasks --cluster your-cluster
+aws ecs describe-tasks --cluster your-cluster --tasks <task-arn>
 ```
 
 2. Check CloudWatch logs:
@@ -291,7 +291,7 @@ After testing, clean up resources:
 ```bash
 # Stop container
 curl -X DELETE \
-  https://prz6mum7c7.execute-api.ap-southeast-2.amazonaws.com/containers/oc-... \
+  https://your-api-id.execute-api.your-region.amazonaws.com/containers/oc-... \
   -H "Authorization: Bearer your-api-key"
 
 # Or use cleanup script

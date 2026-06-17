@@ -18,8 +18,8 @@
 
 ```bash
 AWS Region: ap-southeast-2
-AWS Account: 826182175287
-AWS Profile: personal
+AWS Account: 123456789012
+AWS Profile: default
 DynamoDB Table: openclaw-containers
 Test User ID: test-user-123
 Container ID: oc-test-e2e-aws-001
@@ -34,7 +34,7 @@ Container ID: oc-test-e2e-aws-001
 ✓ python3 is installed
 ✓ curl is installed
 ✓ jq is installed
-✓ AWS credentials valid (Account: 826182175287)
+✓ AWS credentials valid (Account: 123456789012)
 ✓ ANTHROPIC_API_KEY is set
 ```
 
@@ -81,7 +81,7 @@ Container ID: oc-test-e2e-aws-001
 
 **Command:**
 ```bash
-AWS_PROFILE=personal python3 scripts/container/fetch_config.py \
+AWS_PROFILE=default python3 scripts/container/fetch_config.py \
   --user-id test-user-123 \
   --container-id oc-test-e2e-aws-001 \
   --openclaw-config /tmp/test-e2e-configs-$$/openclaw.json \
@@ -253,7 +253,7 @@ Container ID: oc-test-e2e-aws-001
 ## How to Run This Test
 
 ```bash
-cd /Users/andrewsinclair/workspace/clawtalk/orchestrator
+cd /path/to/orchestrator
 
 # Ensure .env has ANTHROPIC_API_KEY
 cat .env | grep ANTHROPIC_API_KEY
@@ -273,14 +273,14 @@ aws dynamodb get-item \
   --table-name openclaw-containers \
   --key '{"pk":{"S":"USER#test-user-123"},"sk":{"S":"CONFIG#primary"}}' \
   --region ap-southeast-2 \
-  --profile personal | jq
+  --profile default | jq
 
 # View system config
 aws dynamodb get-item \
   --table-name openclaw-containers \
   --key '{"pk":{"S":"SYSTEM"},"sk":{"S":"CONFIG#defaults"}}' \
   --region ap-southeast-2 \
-  --profile personal | jq
+  --profile default | jq
 ```
 
 ## Cleanup Test Data
@@ -291,14 +291,14 @@ aws dynamodb delete-item \
   --table-name openclaw-containers \
   --key '{"pk":{"S":"USER#test-user-123"},"sk":{"S":"CONFIG#primary"}}' \
   --region ap-southeast-2 \
-  --profile personal
+  --profile default
 
 # Delete system config
 aws dynamodb delete-item \
   --table-name openclaw-containers \
   --key '{"pk":{"S":"SYSTEM"},"sk":{"S":"CONFIG#defaults"}}' \
   --region ap-southeast-2 \
-  --profile personal
+  --profile default
 ```
 
 ## Success Metrics
