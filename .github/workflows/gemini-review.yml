@@ -1,0 +1,56 @@
+name: Gemini Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  gemini-review:
+    # Only review agent PRs or PRs with significant changes
+    if: contains(github.event.pull_request.labels.*.name, 'agent-pr') || github.event.pull_request.user.login == 'claude-agent[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "diff_size=$(wc -c < /tmp/pr.diff)" >> $GITHUB_OUTPUT
+
+      - name: Gemini review
+        if: steps.diff.outputs.diff_size != '0'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY not set, skipping review"
+            exit 0
+          fi
+
+          DIFF=$(cat /tmp/pr.diff | head -c 30000)
+          PROMPT="You are a senior code reviewer. Review this pull request diff and provide structured feedback. For each issue found, prefix with severity: CRITICAL, HIGH, MEDIUM, or LOW. Focus on: bugs, security issues, missing error handling, test coverage gaps, and code quality. Be specific with file and line references. If the code looks good, say so briefly.\n\nDiff:\n${DIFF}"
+
+          RESPONSE=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"contents\":[{\"parts\":[{\"text\":$(echo "$PROMPT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")}]}]}")
+
+          REVIEW=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['candidates'][0]['content']['parts'][0]['text'])" 2>/dev/null || echo "Review unavailable")
+
+          gh pr comment $PR_NUMBER --repo $REPO --body "## :mag: Cross-Model Review (Gemini)
+
+          ${REVIEW}
+
+          ---
+          *Reviewed by Gemini 2.0 Flash — address all CRITICAL and HIGH issues before merge*"

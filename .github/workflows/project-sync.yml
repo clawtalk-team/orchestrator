@@ -1,0 +1,45 @@
+name: Project Board Sync
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  sync-project:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Update project status
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "PROJECT_TOKEN not set, skipping project sync"
+            exit 0
+          fi
+
+          EVENT="${{ github.event_name }}"
+          ACTION="${{ github.event.action }}"
+
+          if [ "$EVENT" = "issues" ] && [ "$ACTION" = "labeled" ]; then
+            LABEL="${{ github.event.label.name }}"
+            if [ "$LABEL" = "agent:ready" ]; then
+              echo "Setting issue status to In Progress"
+              gh issue comment ${{ github.event.issue.number }} --body ":arrow_forward: Status: **In Progress** (agent dispatched)"
+            elif [ "$LABEL" = "blocked" ]; then
+              echo "Setting issue status to Blocked"
+              gh issue comment ${{ github.event.issue.number }} --body ":no_entry: Status: **Blocked** (agent needs help)"
+            fi
+          fi
+
+          if [ "$EVENT" = "pull_request" ] && [ "$ACTION" = "opened" ]; then
+            echo "PR opened, setting to In Review"
+          fi
+
+          if [ "$EVENT" = "pull_request" ] && [ "$ACTION" = "closed" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "PR merged, setting to Done"
+          fi
