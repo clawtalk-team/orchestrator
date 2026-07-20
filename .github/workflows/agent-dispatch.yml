@@ -66,7 +66,10 @@ jobs:
 
       - name: Run agent
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           claude --print --dangerously-skip-permissions \
             "You are the Orchestrator Agent for ClawTalk.
@@ -93,7 +96,10 @@ jobs:
         if: steps.ci.outcome == 'failure'
         id: retry1
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           CI_OUTPUT=$(make ci 2>&1 | tail -50 || true)
           claude --print --dangerously-skip-permissions \
@@ -111,7 +117,10 @@ jobs:
         if: steps.ci.outcome == 'failure' && steps.retry1.outcome == 'failure'
         id: retry2
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           CI_OUTPUT=$(make ci 2>&1 | tail -50 || true)
           claude --print --dangerously-skip-permissions \
