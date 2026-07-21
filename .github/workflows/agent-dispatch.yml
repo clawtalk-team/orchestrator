@@ -1,0 +1,190 @@
+name: Agent Dispatch
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  agent-implement:
+    # Triggers when agent:ready is added AND an agent:<scope> label exists
+    if: >
+      github.event.label.name == 'agent:ready' &&
+      contains(join(github.event.issue.labels.*.name, ','), 'agent:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Notify Slack — agent started
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: |
+          MSG=":robot_face: *Orchestrator Agent* started on #$ISSUE_NUMBER: *$ISSUE_TITLE*"
+          if [ -n "$SLACK_BOT_TOKEN" ] && [ -n "$SLACK_CHANNEL_ID" ]; then
+            RESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \
+              -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d "{\"channel\": \"$SLACK_CHANNEL_ID\", \"text\": \"$MSG\"}")
+            THREAD_TS=$(echo "$RESPONSE" | jq -r '.ts // empty')
+            echo "SLACK_THREAD_TS=$THREAD_TS" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Create feature branch
+        run: |
+          git config user.name "claude-agent[bot]"
+          git config user.email "claude-agent[bot]@users.noreply.github.com"
+          git checkout -b "agent/issue-$ISSUE_NUMBER"
+
+      - name: Read issue details
+        id: issue
+        run: |
+          BODY=$(gh issue view "$ISSUE_NUMBER" --json body -q '.body')
+          echo "body<<ISSUE_EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "ISSUE_EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run agent
+        env:
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ISSUE_BODY: ${{ steps.issue.outputs.body }}
+        run: |
+          claude --print --dangerously-skip-permissions \
+            "You are the Orchestrator Agent for ClawTalk.
+             Read AGENTS.md and CLAUDE.md for your rules and constraints.
+
+             Implement issue #$ISSUE_NUMBER: $ISSUE_TITLE
+
+             $ISSUE_BODY
+             
+             Follow the mandatory workflow:
+             1. Write tests first (TDD)
+             2. Implement the feature/fix
+             3. Run make ci to verify everything passes
+             4. Commit all changes with descriptive messages referencing issue #$ISSUE_NUMBER
+             
+             Do NOT create a PR — just make commits on this branch."
+
+      - name: Verify CI passes
+        id: ci
+        run: make ci
+        continue-on-error: true
+
+      - name: Retry on CI failure (attempt 2)
+        if: steps.ci.outcome == 'failure'
+        id: retry1
+        env:
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          CI_OUTPUT=$(make ci 2>&1 | tail -50 || true)
+          claude --print --dangerously-skip-permissions \
+            "The CI check failed with the following output:
+             
+             \`\`\`
+             $CI_OUTPUT
+             \`\`\`
+             
+             Fix the issues and commit the fixes. Reference issue #$ISSUE_NUMBER."
+          make ci
+        continue-on-error: true
+
+      - name: Retry on CI failure (attempt 3)
+        if: steps.ci.outcome == 'failure' && steps.retry1.outcome == 'failure'
+        id: retry2
+        env:
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          CI_OUTPUT=$(make ci 2>&1 | tail -50 || true)
+          claude --print --dangerously-skip-permissions \
+            "CI still failing after retry. Error output:
+             
+             \`\`\`
+             $CI_OUTPUT
+             \`\`\`
+             
+             Fix the remaining issues. Reference issue #$ISSUE_NUMBER."
+          make ci
+
+      - name: Push branch and create PR
+        if: steps.ci.outcome == 'success' || steps.retry1.outcome == 'success' || steps.retry2.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push -u origin "agent/issue-$ISSUE_NUMBER"
+          PR_URL=$(gh pr create \
+            --title "Agent: $ISSUE_TITLE" \
+            --body "$(cat <<'EOF'
+          ## Summary
+          Automated implementation for #${{ env.ISSUE_NUMBER }}.
+          
+          ## Agent
+          Orchestrator Agent (Claude Code)
+          
+          ## Review checklist
+          - [ ] Code review by human
+          - [ ] CI passing
+          - [ ] Cross-model review (Gemini)
+          
+          Closes #${{ env.ISSUE_NUMBER }}
+          EOF
+          )" \
+            --label "agent-pr")
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          gh issue comment "$ISSUE_NUMBER" --body ":link: PR created: $PR_URL"
+
+      - name: Label as blocked on total failure
+        if: steps.ci.outcome == 'failure' && steps.retry1.outcome == 'failure' && steps.retry2.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --add-label "blocked"
+          gh issue comment "$ISSUE_NUMBER" --body ":x: Agent failed after 3 CI attempts. Needs human intervention."
+
+      - name: Notify Slack — result
+        if: always()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: |
+          if [ -n "$PR_URL" ]; then
+            MSG=":eyes: PR ready for review: $PR_URL"
+          elif [ "${{ job.status }}" = "failure" ]; then
+            MSG=":x: *Orchestrator Agent* blocked on #$ISSUE_NUMBER after 3 attempts. Needs human."
+          else
+            MSG=":warning: *Orchestrator Agent* finished with status: ${{ job.status }}"
+          fi
+          if [ -n "$SLACK_BOT_TOKEN" ] && [ -n "$SLACK_CHANNEL_ID" ] && [ -n "$SLACK_THREAD_TS" ]; then
+            curl -s -X POST https://slack.com/api/chat.postMessage \
+              -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d "{\"channel\": \"$SLACK_CHANNEL_ID\", \"thread_ts\": \"$SLACK_THREAD_TS\", \"text\": \"$MSG\"}"
+          fi
