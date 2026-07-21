@@ -70,14 +70,15 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          ISSUE_BODY: ${{ steps.issue.outputs.body }}
         run: |
           claude --print --dangerously-skip-permissions \
             "You are the Orchestrator Agent for ClawTalk.
              Read AGENTS.md and CLAUDE.md for your rules and constraints.
-             
+
              Implement issue #$ISSUE_NUMBER: $ISSUE_TITLE
-             
-             ${{ steps.issue.outputs.body }}
+
+             $ISSUE_BODY
              
              Follow the mandatory workflow:
              1. Write tests first (TDD)
