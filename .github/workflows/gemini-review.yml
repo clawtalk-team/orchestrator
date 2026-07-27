@@ -6,7 +6,7 @@ on:
 
 jobs:
   cross-model-review:
-    if: contains(github.event.pull_request.labels.*.name, 'agent-pr') || github.event.pull_request.user.login == 'claude-agent[bot]'
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
