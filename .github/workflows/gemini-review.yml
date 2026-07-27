@@ -1,12 +1,11 @@
-name: Gemini Code Review
+name: Cross-Model Code Review
 
 on:
   pull_request:
     types: [opened, synchronize]
 
 jobs:
-  gemini-review:
-    # Only review agent PRs or PRs with significant changes
+  cross-model-review:
     if: contains(github.event.pull_request.labels.*.name, 'agent-pr') || github.event.pull_request.user.login == 'claude-agent[bot]'
     runs-on: ubuntu-latest
     permissions:
@@ -25,32 +24,91 @@ jobs:
           git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
           echo "diff_size=$(wc -c < /tmp/pr.diff)" >> $GITHUB_OUTPUT
 
-      - name: Gemini review
+      - name: Review via Gemini 2.5 Pro (OpenRouter)
         if: steps.diff.outputs.diff_size != '0'
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "GEMINI_API_KEY not set, skipping review"
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY not set, skipping review"
             exit 0
           fi
 
-          DIFF=$(cat /tmp/pr.diff | head -c 30000)
-          PROMPT="You are a senior code reviewer. Review this pull request diff and provide structured feedback. For each issue found, prefix with severity: CRITICAL, HIGH, MEDIUM, or LOW. Focus on: bugs, security issues, missing error handling, test coverage gaps, and code quality. Be specific with file and line references. If the code looks good, say so briefly.\n\nDiff:\n${DIFF}"
+          DIFF=$(cat /tmp/pr.diff | head -c 60000)
 
-          RESPONSE=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"contents\":[{\"parts\":[{\"text\":$(echo "$PROMPT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")}]}]}")
+          python3 -c "
+          import json, os, urllib.request
 
-          REVIEW=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['candidates'][0]['content']['parts'][0]['text'])" 2>/dev/null || echo "Review unavailable")
+          diff = os.environ.get('DIFF', '')
+          pr_title = os.environ.get('PR_TITLE', '')
+          pr_body = os.environ.get('PR_BODY', '')
 
-          gh pr comment $PR_NUMBER --repo $REPO --body "## :mag: Cross-Model Review (Gemini)
+          prompt = f'''You are a senior architect reviewing code written by an AI coding agent (Claude).
+          Your job is to catch issues the author might miss about their own code.
+
+          Focus on:
+          1. BUGS — logic errors, off-by-one, race conditions, null/nil dereferences
+          2. SECURITY — injection, auth bypass, secrets exposure, OWASP top 10
+          3. ARCHITECTURE — coupling, missing abstractions, violation of existing patterns
+          4. EDGE CASES — error paths, empty inputs, concurrent access, resource leaks
+
+          Do NOT comment on:
+          - Style, formatting, or naming (unless misleading)
+          - Missing docs or comments
+          - Things that are clearly intentional design choices
+
+          For each issue, use this format:
+          **[SEVERITY]** \`file:line\` — description
+
+          Severities: CRITICAL (blocks merge), HIGH (should fix), MEDIUM (consider fixing), LOW (nit)
+
+          If the code looks solid, say so in one line — do not pad with generic praise.
+
+          PR: {pr_title}
+          Description: {pr_body or '(none)'}
+
+          Diff:
+          {diff}'''
+
+          payload = json.dumps({
+              'model': 'google/gemini-2.5-pro',
+              'messages': [{'role': 'user', 'content': prompt}],
+              'max_tokens': 4096,
+              'temperature': 0.2
+          }).encode()
+
+          req = urllib.request.Request(
+              'https://openrouter.ai/api/v1/chat/completions',
+              data=payload,
+              headers={
+                  'Authorization': f\"Bearer {os.environ['OPENROUTER_API_KEY']}\",
+                  'Content-Type': 'application/json',
+                  'HTTP-Referer': 'https://github.com/clawtalk-team',
+                  'X-Title': 'ClawTalk PR Review'
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  data = json.loads(resp.read())
+                  review = data['choices'][0]['message']['content']
+          except Exception as e:
+              review = f'Review unavailable: {e}'
+
+          with open('/tmp/review.md', 'w') as f:
+              f.write(review)
+          " DIFF="$DIFF"
+
+          REVIEW=$(cat /tmp/review.md)
+
+          gh pr comment $PR_NUMBER --repo $REPO --body "## :brain: Cross-Model Review (Gemini 2.5 Pro)
 
           ${REVIEW}
 
           ---
-          *Reviewed by Gemini 2.0 Flash — address all CRITICAL and HIGH issues before merge*"
+          *Reviewed by Gemini 2.5 Pro via OpenRouter — address CRITICAL and HIGH issues before merge*"
