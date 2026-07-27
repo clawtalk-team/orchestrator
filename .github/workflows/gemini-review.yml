@@ -78,7 +78,7 @@ jobs:
           payload = json.dumps({
               'model': 'google/gemini-2.5-pro',
               'messages': [{'role': 'user', 'content': prompt}],
-              'max_tokens': 4096,
+              'max_tokens': 16384,
               'temperature': 0.2
           }).encode()
 
@@ -96,7 +96,8 @@ jobs:
           try:
               with urllib.request.urlopen(req, timeout=120) as resp:
                   data = json.loads(resp.read())
-                  review = data['choices'][0]['message']['content']
+                  msg = data['choices'][0]['message']
+                  review = msg.get('content') or '(Model produced reasoning only — no actionable findings)'
           except Exception as e:
               review = f'Review unavailable: {e}'
 
