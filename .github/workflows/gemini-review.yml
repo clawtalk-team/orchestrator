@@ -6,7 +6,11 @@ on:
 
 jobs:
   cross-model-review:
-    if: github.event.pull_request.draft == false
+    # Fork PRs get no secrets, so this job can only fail on them. Skip it
+    # rather than showing a red X on every outside contribution.
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read

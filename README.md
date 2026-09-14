@@ -234,7 +234,6 @@ orchestrator/
 ├── scripts/
 │   ├── manage.py            # CLI for cluster management, cleanup, reconciliation
 │   └── load_defaults.py     # Load default configs into DynamoDB
-├── infrastructure/          # EventBridge, Tailscale Terraform
 ├── docs/                    # Extended documentation
 ├── lambda_handler.py        # AWS Lambda entry point
 ├── Dockerfile.lambda        # Lambda container image (ARM64)
@@ -300,7 +299,6 @@ See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for the full deployment guide.
 - [Configuration API](./docs/CONFIG_API.md) — Config endpoint reference
 - [E2E Testing](./docs/E2E_TEST_GUIDE.md) — End-to-end test guide
 - [Container Requirements](./docs/CONTAINER_REQUIREMENTS.md) — Container config protocol
-- [Implementation Details](./docs/IMPLEMENTATION_SUMMARY.md) — DynamoDB schema and internals
 
 ## License
 

@@ -7,9 +7,17 @@ on:
 jobs:
   agent-implement:
     # Triggers when agent:ready is added AND an agent:<scope> label exists
+    # Three gates, all required:
+    #   1. the 'agent:ready' label was just applied (labelling needs write access)
+    #   2. a scope label is present
+    #   3. the ISSUE AUTHOR is trusted. Without this, a maintainer labelling a
+    #      stranger's issue would feed attacker-authored text straight into an
+    #      agent running with --dangerously-skip-permissions, live AWS keys and
+    #      contents: write. The repo is public, so anyone can file an issue.
     if: >
       github.event.label.name == 'agent:ready' &&
-      contains(join(github.event.issue.labels.*.name, ','), 'agent:')
+      contains(join(github.event.issue.labels.*.name, ','), 'agent:') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -74,7 +82,7 @@ jobs:
         run: |
           claude --print --dangerously-skip-permissions \
             "You are the Orchestrator Agent for ClawTalk.
-             Read AGENTS.md and CLAUDE.md for your rules and constraints.
+             Read CONTRIBUTING.md for the conventions and constraints of this repo.
 
              Implement issue #$ISSUE_NUMBER: $ISSUE_TITLE
 

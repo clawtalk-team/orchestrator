@@ -1,8 +1,16 @@
 # Deployment Guide
 
+> **Note for open-source readers:** this guide describes how the maintainers
+> deploy the hosted service. It refers throughout to a sibling
+> `infrastructure` repository which is private, because it contains
+> account-specific deployment configuration. You do not need it to build, test,
+> or run the orchestrator locally — see the [README](../README.md) and
+> [CONTRIBUTING.md](../CONTRIBUTING.md) for that.
+
 ## Prerequisites
 
 - AWS CLI configured with `--profile default`
+- The private `infrastructure` repository checked out alongside this one
 - Docker with ARM64 support (for Lambda)
 - Terraform 1.5+
 - Access to ECR repository: `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/orchestrator`
@@ -279,7 +287,9 @@ This step is **manual and not managed by Terraform** — Terraform creates the S
 
 ### Step 4 — Apply Terraform
 
-`infrastructure/tailscale.tf` in the orchestrator repo is included from the root Terraform in `../infrastructure`. Run `terraform apply` from there:
+The Tailscale SSM slot and IAM policy are declared in the `orchestrator`
+Terraform module, which lives in the private `infrastructure` repository.
+Run `terraform apply` from there:
 
 ```bash
 cd ../infrastructure/infra/environments/dev
