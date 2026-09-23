@@ -13,12 +13,10 @@ This directory contains the documentation for the orchestrator service.
 ### Testing
 
 - **[E2E_TEST_GUIDE.md](E2E_TEST_GUIDE.md)** - Complete guide for running end-to-end tests
-- **[AWS_E2E_TEST_RESULTS.md](AWS_E2E_TEST_RESULTS.md)** - Latest E2E test results against AWS DynamoDB
 
 ### Implementation Details
 
 - **[CONFIG_API.md](CONFIG_API.md)** - Configuration API reference with complete parameter documentation
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Summary of the DynamoDB config delivery implementation
 - **[CONTAINER_REQUIREMENTS.md](CONTAINER_REQUIREMENTS.md)** - Requirements for container configuration based on openclaw-agent
 
 ## Documentation Structure
@@ -31,8 +29,6 @@ orchestrator/
 │   ├── DEPLOYMENT.md                  # Deployment instructions
 │   ├── CONFIG_API.md                  # Configuration API reference
 │   ├── E2E_TEST_GUIDE.md             # Testing guide
-│   ├── AWS_E2E_TEST_RESULTS.md       # Test results
-│   ├── IMPLEMENTATION_SUMMARY.md      # Implementation overview
 │   └── CONTAINER_REQUIREMENTS.md      # Container requirements
 ├── scripts/
 │   ├── README.md                      # Scripts documentation

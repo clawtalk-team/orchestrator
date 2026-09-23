@@ -6,7 +6,11 @@ on:
 
 jobs:
   cross-model-review:
-    if: github.event.pull_request.draft == false
+    # Fork PRs get no secrets, so this job can only fail on them. Skip it
+    # rather than showing a red X on every outside contribution.
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,7 +43,11 @@ jobs:
             exit 0
           fi
 
-          DIFF=$(cat /tmp/pr.diff | head -c 60000)
+          # Export it: the python3 -c invocation below reads it from the
+          # environment. Passing DIFF=... after -c makes it argv[1], not an
+          # environment variable, which is how this silently sent an empty
+          # diff to the model for months.
+          export DIFF=$(cat /tmp/pr.diff | head -c 60000)
 
           python3 -c "
           import json, os, urllib.request
@@ -103,7 +111,7 @@ jobs:
 
           with open('/tmp/review.md', 'w') as f:
               f.write(review)
-          " DIFF="$DIFF"
+          "
 
           REVIEW=$(cat /tmp/review.md)
 
