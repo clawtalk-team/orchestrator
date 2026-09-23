@@ -229,11 +229,13 @@ The Lambda does **not** store a long-lived auth key. On every cold-start, `scrip
 > **Important:** Tailscale will not work in a new environment until all of these steps are completed. The Lambda starts without Tailscale if the SSM parameter is missing or invalid.
 
 1. **Declare the tag** in your tailnet ACL (one-time per tailnet — skip if `tag:orchestrator` already exists):
+
+   To use a different tag, set `TAILSCALE_TAG` on the Lambda (default `tag:orchestrator`). A tag missing from `tagOwners` makes key generation fail with `HTTP Error 400: Bad Request`.
    - Tailscale Admin Console → **Access Controls** → add to `tagOwners` (see below)
 2. **Generate a personal API key** (Settings → Keys, set max 90-day expiry)
 3. **Store it in SSM:**
    ```bash
-   aws --profile default ssm put-parameter \
+   aws --profile <profile-for-your-account> ssm put-parameter \
      --region ap-southeast-2 \
      --name "/clawtalk/orchestrator/<env>/tailscale/api-key" \
      --type SecureString \
@@ -275,7 +277,7 @@ In the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys
 ### Step 3 — Store the key in SSM
 
 ```bash
-aws --profile default ssm put-parameter \
+aws --profile <profile-for-your-account> ssm put-parameter \
   --region ap-southeast-2 \
   --name "/clawtalk/orchestrator/dev/tailscale/api-key" \
   --type SecureString \
@@ -314,7 +316,7 @@ After `apply`, Terraform outputs:
 When your personal API key approaches expiry, generate a new one in the Tailscale Admin Console and update SSM:
 
 ```bash
-aws --profile default ssm put-parameter \
+aws --profile <profile-for-your-account> ssm put-parameter \
   --region ap-southeast-2 \
   --name "/clawtalk/orchestrator/dev/tailscale/api-key" \
   --type SecureString \
