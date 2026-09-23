@@ -29,7 +29,7 @@ TS_LOG="${TS_DIR}/tailscaled.log"
 if [ -z "${TAILSCALE_AUTH_KEY:-}" ] && [ -n "${TAILSCALE_API_KEY_SSM_PATH:-}" ]; then
     echo "[tailscale] generating ephemeral auth key via Tailscale API ($(date -u +%H:%M:%S.%3NZ))"
     TAILSCALE_AUTH_KEY=$(python3 - <<'PYEOF'
-import urllib.request, urllib.parse, json, os, sys, boto3
+import urllib.request, urllib.parse, urllib.error, json, os, sys, boto3
 
 region  = os.environ.get("AWS_REGION", "ap-southeast-2")
 ssm_path = os.environ.get("TAILSCALE_API_KEY_SSM_PATH", "")
@@ -66,7 +66,7 @@ try:
         print(json.loads(r.read())["key"], end="")
 
 except Exception as exc:
-    detail = exc.read().decode(errors="replace") if hasattr(exc, "read") else ""
+    detail = exc.read().decode(errors="replace") if isinstance(exc, urllib.error.HTTPError) else ""
     print(f"[tailscale] WARNING: could not generate auth key: {exc} {detail}".rstrip(), file=sys.stderr)
 PYEOF
     ) || true
