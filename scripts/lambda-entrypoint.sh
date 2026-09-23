@@ -11,6 +11,10 @@
 #   3. TAILSCALE_AUTH_KEY_SSM_PATH        — SSM path to a static auth key (deprecated)
 #
 # If none is set the Lambda starts normally without Tailscale.
+#
+# TAILSCALE_TAG sets the ACL tag requested for the ephemeral node (default
+# tag:orchestrator). It must exist in the tailnet policy's tagOwners, or the
+# Tailscale API rejects the key request with 400.
 
 set -euo pipefail
 
@@ -25,10 +29,11 @@ TS_LOG="${TS_DIR}/tailscaled.log"
 if [ -z "${TAILSCALE_AUTH_KEY:-}" ] && [ -n "${TAILSCALE_API_KEY_SSM_PATH:-}" ]; then
     echo "[tailscale] generating ephemeral auth key via Tailscale API ($(date -u +%H:%M:%S.%3NZ))"
     TAILSCALE_AUTH_KEY=$(python3 - <<'PYEOF'
-import urllib.request, urllib.parse, json, os, sys, boto3
+import urllib.request, urllib.parse, urllib.error, json, os, sys, boto3
 
 region  = os.environ.get("AWS_REGION", "ap-southeast-2")
 ssm_path = os.environ.get("TAILSCALE_API_KEY_SSM_PATH", "")
+ts_tag   = os.environ.get("TAILSCALE_TAG", "tag:orchestrator")
 
 try:
     ssm = boto3.client("ssm", region_name=region)
@@ -41,7 +46,7 @@ try:
                     "reusable":      False,
                     "ephemeral":     True,
                     "preauthorized": True,
-                    "tags":          ["tag:orchestrator"],
+                    "tags":          [ts_tag],
                 }
             }
         },
@@ -61,7 +66,8 @@ try:
         print(json.loads(r.read())["key"], end="")
 
 except Exception as exc:
-    print(f"[tailscale] WARNING: could not generate auth key: {exc}", file=sys.stderr)
+    detail = exc.read().decode(errors="replace") if isinstance(exc, urllib.error.HTTPError) else ""
+    print(f"[tailscale] WARNING: could not generate auth key: {exc} {detail}".rstrip(), file=sys.stderr)
 PYEOF
     ) || true
 fi
